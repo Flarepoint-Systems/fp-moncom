@@ -1,6 +1,6 @@
 {
   "name": "moncom",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MonCOM - Monitor Commander by Flarepoint",
   "main": "dist/main/index.js",
   "author": "Flarepoint",
