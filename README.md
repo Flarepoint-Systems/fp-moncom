@@ -116,6 +116,9 @@ A central overview of your monitors and presets with quick-action buttons:
 - **Minimize to tray** keeps MonCOM running in the background.
 - **Auto-launch preset** applies a saved preset when MonCOM starts.
 - **Run as administrator** lets MonCOM launch apps that need elevated privileges. When it's on, MonCOM asks for administrator permission each time it starts.
+- **Skip the permission prompt** (shown under Run as administrator) registers a Windows scheduled task named "MonCOM Elevated Startup". The task starts MonCOM elevated 30 seconds after you log on, and manual launches go through it too, so the permission dialog never appears. This is meant for an unattended wall display that has to come up on its own in the morning. Note that anyone who can start MonCOM on that PC then gets it with administrator rights and no prompt. Turning the switch off removes the task and restores the prompt.
+
+  The account that logs in must be a local administrator, since the task runs with that account's own token. If you move or reinstall MonCOM to a different folder, switch this off and on again so the task points at the new path.
 
 ### System Tray Integration
 MonCOM lives in your system tray. Double-click the icon or use the context menu to show or hide the main window without closing the app.

@@ -15,12 +15,29 @@ export function SettingsPage() {
   });
   const [presets, setPresets] = useState<Preset[]>([]);
   const [saved, setSaved] = useState(false);
+  const [elevatedAutoStart, setElevatedAutoStart] = useState(false);
+  const [autoStartBusy, setAutoStartBusy] = useState(false);
+  const [autoStartError, setAutoStartError] = useState<string | null>(null);
   const loaded = useRef(false);
 
   useEffect(() => {
     window.moncom?.getSettings().then((s) => { setSettings(s); loaded.current = true; });
     window.moncom?.getPresets().then(setPresets);
+    window.moncom?.getElevatedAutoStart().then(setElevatedAutoStart);
   }, []);
+
+  const toggleElevatedAutoStart = async () => {
+    const next = !elevatedAutoStart;
+    setAutoStartBusy(true);
+    setAutoStartError(null);
+    const result = await window.moncom?.setElevatedAutoStart(next);
+    setAutoStartBusy(false);
+    if (result?.ok) {
+      setElevatedAutoStart(next);
+    } else {
+      setAutoStartError(result?.error ?? 'Could not change the startup task.');
+    }
+  };
 
   // Auto-save whenever settings change (skip the initial load)
   const saveSettings = useCallback(async (s: AppSettings) => {
@@ -64,7 +81,9 @@ export function SettingsPage() {
 
         <SettingRow
           title="Launch on startup"
-          description="Start MonCOM automatically when Windows boots"
+          description={elevatedAutoStart
+            ? 'Handled by the elevated startup task, 30 seconds after you log on'
+            : 'Start MonCOM automatically when Windows boots'}
           checked={settings.launchOnStartup}
           onChange={() => toggle('launchOnStartup')}
         />
@@ -94,13 +113,27 @@ export function SettingsPage() {
         />
 
         {settings.runAsAdmin && (
-          <div className="px-6 py-4 border-t border-border flex items-start gap-3 bg-warning/5">
-            <ShieldAlert className="w-4 h-4 text-warning shrink-0 mt-0.5" />
-            <p className="text-xs text-text-secondary leading-relaxed">
-              With this on, MonCOM asks for administrator permission each time it starts.
-              Leave it off unless you need to launch apps that require elevation.
-            </p>
-          </div>
+          <>
+            <SettingRow
+              title="Skip the permission prompt"
+              description="Register a Windows scheduled task that starts MonCOM elevated, at logon and on every manual launch, without asking"
+              checked={elevatedAutoStart}
+              onChange={toggleElevatedAutoStart}
+              disabled={autoStartBusy}
+              last
+            />
+            <div className="px-6 py-4 border-t border-border flex items-start gap-3 bg-warning/5">
+              <ShieldAlert className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+              <p className="text-xs text-text-secondary leading-relaxed">
+                {elevatedAutoStart
+                  ? `MonCOM starts with administrator rights and no prompt, through the scheduled task "MonCOM Elevated Startup". Anyone who can start MonCOM on this PC gets it elevated. Turn this off to go back to the permission prompt.`
+                  : 'With this on, MonCOM asks for administrator permission each time it starts. Leave it off unless you need to launch apps that require elevation.'}
+              </p>
+            </div>
+            {autoStartError && (
+              <div className="px-6 pb-4 -mt-1 text-xs text-danger">{autoStartError}</div>
+            )}
+          </>
         )}
       </section>
 
@@ -163,12 +196,13 @@ export function SettingsPage() {
   );
 }
 
-function SettingRow({ title, description, checked, onChange, last }: {
+function SettingRow({ title, description, checked, onChange, last, disabled }: {
   title: string;
   description: string;
   checked: boolean;
   onChange: () => void;
   last?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div className={`px-6 py-5 flex items-center justify-between gap-6 ${last ? '' : 'border-b border-border'}`}>
@@ -178,7 +212,8 @@ function SettingRow({ title, description, checked, onChange, last }: {
       </div>
       <button
         onClick={onChange}
-        className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${
+        disabled={disabled}
+        className={`w-11 h-6 rounded-full transition-colors relative shrink-0 disabled:opacity-40 ${
           checked ? 'bg-commander' : 'bg-bg-steel'
         }`}
       >

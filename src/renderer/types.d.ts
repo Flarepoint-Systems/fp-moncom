@@ -37,6 +37,9 @@ export interface MonCOMAPI {
   onRecordingStatus(cb: (status: RecordingStatus) => void): () => void;
   playActions(actions: AutomationAction[], zone: Zone, monitors: MonitorInfo[]): Promise<boolean>;
   isElevated(): Promise<boolean>;
+  /** True when the silent-elevated-startup scheduled task is registered. */
+  getElevatedAutoStart(): Promise<boolean>;
+  setElevatedAutoStart(enabled: boolean): Promise<{ ok: boolean; error?: string }>;
   identifyMonitors(): Promise<void>;
   hasLaunchedWindows(): Promise<boolean>;
   getProfiles(): Promise<ProfileEntry[]>;

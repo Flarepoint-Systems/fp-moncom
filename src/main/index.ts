@@ -8,6 +8,7 @@ import { getStableMonitors } from './monitors';
 import { startRecording, stopRecording, playActions } from './automation-manager';
 import { initAutoUpdater } from './updater';
 import { registerHotkeys, registerHotkeyHandlers } from './hotkeys';
+import { createStartupTask, removeStartupTask, runStartupTask, startupTaskExists } from './startup-task';
 import type { MonitorInfo } from '../shared/types';
 import { IPC } from '../shared/types';
 
@@ -208,6 +209,16 @@ app.whenReady().then(() => {
   if (!isDev) {
     try {
       if (loadSettings().runAsAdmin && !isProcessElevated()) {
+        // The scheduled task elevates with no consent prompt, so prefer it over RunAs.
+        if (startupTaskExists()) {
+          app.releaseSingleInstanceLock();
+          if (runStartupTask()) {
+            app.exit(0);
+            return;
+          }
+          app.requestSingleInstanceLock();
+          console.error('[MonCOM] Startup task exists but would not run; falling back to RunAs');
+        }
         // For a portable build, process.execPath is a temp-extracted copy that the
         // portable wrapper deletes as soon as this process exits — so relaunching it
         // would target a vanished exe. electron-builder exposes the real portable
@@ -301,6 +312,26 @@ app.whenReady().then(() => {
   // Elevation check
   ipcMain.handle(IPC.IS_ELEVATED, () => {
     return isProcessElevated();
+  });
+
+  ipcMain.handle(IPC.GET_ELEVATED_AUTOSTART, () => startupTaskExists());
+
+  ipcMain.handle(IPC.SET_ELEVATED_AUTOSTART, (_event, enabled: boolean) => {
+    if (isDev) {
+      return { ok: false, error: 'Only available in an installed build (dev runs from the Electron binary).' };
+    }
+    const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+    const result = enabled
+      ? createStartupTask(target, isProcessElevated())
+      : removeStartupTask(isProcessElevated());
+    if (result.ok) {
+      // Exactly one startup path at a time, so the two can't race at logon.
+      app.setLoginItemSettings({
+        openAtLogin: !enabled && loadSettings().launchOnStartup,
+        path: process.execPath,
+      });
+    }
+    return result;
   });
 
   // Monitor identification

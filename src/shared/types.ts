@@ -236,6 +236,10 @@ export const IPC = {
   RECORDING_STATUS: 'recording-status',
   PLAY_ACTIONS: 'play-actions',
   IS_ELEVATED: 'is-elevated',
+  /** Whether the silent-elevated-startup scheduled task is registered. */
+  GET_ELEVATED_AUTOSTART: 'get-elevated-autostart',
+  /** Register or remove that task. Returns { ok, error? }. */
+  SET_ELEVATED_AUTOSTART: 'set-elevated-autostart',
   IDENTIFY_MONITOR: 'identify-monitor',
   HAS_LAUNCHED_WINDOWS: 'has-launched-windows',
   GET_PROFILES: 'get-profiles',

@@ -4,6 +4,7 @@ import * as path from 'path';
 import { IPC } from '../shared/types';
 import type { Preset, AppSettings, Zone } from '../shared/types';
 import { getStableMonitors } from './monitors';
+import { startupTaskExists } from './startup-task';
 
 interface MonitorBounds { x: number; y: number; width: number; height: number }
 
@@ -238,9 +239,9 @@ export function registerPresetHandlers(ipcMain: IpcMain) {
   ipcMain.handle(IPC.SAVE_SETTINGS, (_event, settings: AppSettings) => {
     saveSettingsFile(settings);
 
-    // Register/unregister Windows startup
+    // The scheduled task owns startup when it exists; a Run entry too would race it.
     app.setLoginItemSettings({
-      openAtLogin: settings.launchOnStartup,
+      openAtLogin: settings.launchOnStartup && !startupTaskExists(),
       path: process.execPath,
     });
 

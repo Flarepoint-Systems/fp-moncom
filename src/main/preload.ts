@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('moncom', {
 
   // Elevation
   isElevated: () => ipcRenderer.invoke(IPC.IS_ELEVATED),
+  getElevatedAutoStart: () => ipcRenderer.invoke(IPC.GET_ELEVATED_AUTOSTART),
+  setElevatedAutoStart: (enabled: boolean) => ipcRenderer.invoke(IPC.SET_ELEVATED_AUTOSTART, enabled),
 
   // Monitor identification
   identifyMonitors: () => ipcRenderer.invoke(IPC.IDENTIFY_MONITOR),
