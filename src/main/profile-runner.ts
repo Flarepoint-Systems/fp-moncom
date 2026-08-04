@@ -6,11 +6,15 @@
  * positioning. Built on the Phase 1 `waitForWindow` primitive + native input.
  */
 import type { AppProfile, ProfileAction, WindowMatch, KeyModifier } from '../shared/types';
-import { enumWindows, waitForWindow, isWindow, focusWindow, type WindowInfo, type WindowMatcher } from './win32';
+import { enumWindows, waitForWindow, isWindow, bringToForeground, postKey, rootWindowAt, type WindowInfo, type WindowMatcher } from './win32';
 import * as input from './input';
 import { normalizeExe } from '../shared/exe';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Retries for a step whose window should close, and how long to wait for it to react each time. */
+const ACTION_ATTEMPTS = 3;
+const ACTION_SETTLE_MS = 6000;
 
 function matches(w: WindowInfo, m: WindowMatch): boolean {
   if (!m.exe && !m.titleContains && !m.className) return false; // empty matcher never matches
@@ -20,15 +24,16 @@ function matches(w: WindowInfo, m: WindowMatch): boolean {
   return true;
 }
 
-async function waitForClose(hwnd: number, timeoutMs: number): Promise<void> {
+async function waitForClose(hwnd: number, timeoutMs: number): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (!isWindow(hwnd)) return;
+    if (!isWindow(hwnd)) return true;
     await sleep(250);
   }
+  return !isWindow(hwnd);
 }
 
-async function runAction(act: ProfileAction, win: WindowInfo): Promise<void> {
+async function runAction(act: ProfileAction, win: WindowInfo, focused: boolean): Promise<void> {
   if (act.type === 'wait') {
     await sleep(act.ms ?? 0);
     return;
@@ -39,6 +44,11 @@ async function runAction(act: ProfileAction, win: WindowInfo): Promise<void> {
     const r = fresh.rect;
     const ax = Math.round(r.left + (act.x ?? 0.5) * (r.right - r.left));
     const ay = Math.round(r.top + (act.y ?? 0.5) * (r.bottom - r.top));
+    // A coordinate click hits whatever is on top, so never fire it while something else covers the target.
+    if (rootWindowAt(ax, ay) !== win.hwnd) {
+      console.warn(`[MonCOM] skipping click: hwnd=${win.hwnd} is not the window at (${ax}, ${ay})`);
+      return;
+    }
     input.setCursorPos(ax, ay);
     await sleep(25);
     const button = act.right ? 'right' : 'left';
@@ -48,7 +58,9 @@ async function runAction(act: ProfileAction, win: WindowInfo): Promise<void> {
     return;
   }
   if (act.type === 'key') {
-    input.keyTap(act.vkCode ?? 0, (act.modifiers ?? []) as KeyModifier[]);
+    // SendInput goes to whatever holds focus, so post straight to the window when we couldn't take it.
+    if (focused) input.keyTap(act.vkCode ?? 0, (act.modifiers ?? []) as KeyModifier[]);
+    else postKey(win.hwnd, act.vkCode ?? 0);
   }
 }
 
@@ -73,9 +85,17 @@ export async function runProfile(profile: AppProfile, before: Set<number>): Prom
     if (step.position) positionTarget = win;
 
     if (step.do && step.do.length > 0) {
-      focusWindow(win.hwnd);
-      await sleep(150);
-      for (const act of step.do) await runAction(act, win);
+      // The window closing is our only proof the input landed, so retry while it stays open.
+      const attempts = step.waitClose ? ACTION_ATTEMPTS : 1;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const focused = await bringToForeground(win.hwnd);
+        if (!focused) console.warn(`[MonCOM] could not focus hwnd=${win.hwnd}; posting keys directly`);
+        await sleep(150);
+        for (const act of step.do) await runAction(act, win, focused);
+        if (!step.waitClose) break;
+        if (await waitForClose(win.hwnd, ACTION_SETTLE_MS)) break;
+        console.warn(`[MonCOM] window ${win.hwnd} still open after attempt ${attempt}/${attempts}`);
+      }
     }
     if (step.waitClose) await waitForClose(win.hwnd, step.timeoutMs ?? 15000);
   }

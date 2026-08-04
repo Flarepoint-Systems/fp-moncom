@@ -23,6 +23,7 @@ const kernel32 = koffi.load('kernel32.dll');
 
 // RECT { LONG left, top, right, bottom }
 const RECT = koffi.struct('RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
+const POINT = koffi.struct('POINT', { x: 'long', y: 'long' });
 
 // BOOL CALLBACK EnumWindowsProc(HWND, LPARAM)
 const EnumWindowsProc = koffi.proto('bool EnumWindowsProc(intptr_t hwnd, intptr_t lparam)');
@@ -40,11 +41,17 @@ const IsIconic = user32.func('bool IsIconic(intptr_t hwnd)');
 const SetForegroundWindow = user32.func('bool SetForegroundWindow(intptr_t hwnd)');
 const GetWindowLongW = user32.func('int32 GetWindowLongW(intptr_t hwnd, int index)');
 const PostMessageW = user32.func('bool PostMessageW(intptr_t hwnd, uint32 msg, uintptr_t wparam, intptr_t lparam)');
+const GetForegroundWindow = user32.func('intptr_t GetForegroundWindow()');
+const BringWindowToTop = user32.func('bool BringWindowToTop(intptr_t hwnd)');
+const AttachThreadInput = user32.func('bool AttachThreadInput(uint32 idAttach, uint32 idAttachTo, bool fAttach)');
+const WindowFromPoint = user32.func('intptr_t WindowFromPoint(POINT pt)');
+const GetAncestor = user32.func('intptr_t GetAncestor(intptr_t hwnd, uint32 flags)');
 
 // HRESULT DwmGetWindowAttribute(HWND, DWORD, PVOID, DWORD) — bound with a RECT out-param.
 const DwmGetWindowAttributeRect = dwmapi.func('int32 DwmGetWindowAttribute(intptr_t hwnd, uint32 attr, _Out_ RECT *pv, uint32 cb)');
 const DwmGetWindowAttributeInt = dwmapi.func('int32 DwmGetWindowAttribute(intptr_t hwnd, uint32 attr, _Out_ int32 *pv, uint32 cb)');
 
+const GetCurrentThreadId = kernel32.func('uint32 GetCurrentThreadId()');
 const OpenProcess = kernel32.func('intptr_t OpenProcess(uint32 access, bool inherit, uint32 pid)');
 const CloseHandle = kernel32.func('bool CloseHandle(intptr_t h)');
 const QueryFullProcessImageNameW = kernel32.func('bool QueryFullProcessImageNameW(intptr_t h, uint32 flags, void *buf, _Inout_ uint32 *size)');
@@ -60,6 +67,9 @@ const GWL_EXSTYLE = -20;
 const WS_EX_TOOLWINDOW = 0x00000080;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 const WM_CLOSE = 0x0010;
+const WM_KEYDOWN = 0x0100;
+const WM_KEYUP = 0x0101;
+const GA_ROOT = 2;
 
 export interface Rect { left: number; top: number; right: number; bottom: number }
 
@@ -238,11 +248,63 @@ export function isWindow(hwnd: number): boolean {
   return !!IsWindow(hwnd);
 }
 
-/** Restore (if minimized) and bring a window to the foreground. Best-effort (UIPI/foreground-lock may block). */
-export function focusWindow(hwnd: number): void {
-  if (!IsWindow(hwnd)) return;
+function threadOf(hwnd: number): number {
+  const pid: [number] = [0];
+  return GetWindowThreadProcessId(hwnd, pid);
+}
+
+/**
+ * Single attempt at making `hwnd` the foreground window, borrowing foreground
+ * rights from whoever currently holds them.
+ *
+ * Windows refuses SetForegroundWindow unless the calling process already owns
+ * the foreground or received the last input event, which is never true when
+ * MonCOM starts unattended at boot. Attaching our input queue to the current
+ * foreground thread lifts that restriction for the duration of the call.
+ */
+function tryForeground(hwnd: number): boolean {
   if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
-  SetForegroundWindow(hwnd);
+  if (GetForegroundWindow() === hwnd) return true;
+
+  const ours = GetCurrentThreadId();
+  const foreground = threadOf(GetForegroundWindow());
+  const target = threadOf(hwnd);
+  const attachForeground = foreground !== 0 && foreground !== ours;
+  const attachTarget = target !== 0 && target !== ours && target !== foreground;
+
+  if (attachForeground) AttachThreadInput(ours, foreground, true);
+  if (attachTarget) AttachThreadInput(ours, target, true);
+  try {
+    BringWindowToTop(hwnd);
+    SetForegroundWindow(hwnd);
+  } finally {
+    if (attachTarget) AttachThreadInput(ours, target, false);
+    if (attachForeground) AttachThreadInput(ours, foreground, false);
+  }
+  return GetForegroundWindow() === hwnd;
+}
+
+/** Make a window foreground, retrying while other startup apps fight for it. Returns whether it took. */
+export async function bringToForeground(hwnd: number, attempts = 5, gapMs = 250): Promise<boolean> {
+  if (!IsWindow(hwnd)) return false;
+  for (let i = 0; i < attempts; i++) {
+    if (tryForeground(hwnd)) return true;
+    await sleep(gapMs);
+  }
+  return GetForegroundWindow() === hwnd;
+}
+
+/** Top-level window sitting at a screen point. Child controls resolve to their root, so a hit inside a dialog counts. */
+export function rootWindowAt(x: number, y: number): number {
+  const hit = WindowFromPoint({ x: Math.round(x), y: Math.round(y) });
+  return hit ? GetAncestor(hit, GA_ROOT) : 0;
+}
+
+/** Post a key press straight to a window, for when foreground can't be taken and SendInput would miss. */
+export function postKey(hwnd: number, vkCode: number): void {
+  if (!IsWindow(hwnd)) return;
+  PostMessageW(hwnd, WM_KEYDOWN, vkCode, 1);
+  PostMessageW(hwnd, WM_KEYUP, vkCode, 0xc0000001);
 }
 
 /** True DWM frame insets (left/top/right/bottom) between GetWindowRect and the visible frame. */
@@ -284,7 +346,7 @@ export function moveWindowToVisibleRect(
   const wh = Math.round(h + ins.top + ins.bottom);
   const flags = SWP_NOZORDER | (opts.foreground ? 0 : SWP_NOACTIVATE) | SWP_FRAMECHANGED;
   const ok = SetWindowPos(hwnd, 0, wx, wy, ww, wh, flags);
-  if (opts.foreground) SetForegroundWindow(hwnd);
+  if (opts.foreground) tryForeground(hwnd);
   return !!ok;
 }
 
