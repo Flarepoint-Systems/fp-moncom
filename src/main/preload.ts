@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('moncom', {
   startRecording: (zone: any, monitors: any) =>
     ipcRenderer.invoke(IPC.START_RECORDING, zone, monitors),
   stopRecording: () => ipcRenderer.invoke(IPC.STOP_RECORDING),
+  onRecordingStatus: (cb: (status: any) => void) => {
+    const listener = (_e: unknown, status: any) => cb(status);
+    ipcRenderer.on(IPC.RECORDING_STATUS, listener);
+    return () => ipcRenderer.removeListener(IPC.RECORDING_STATUS, listener);
+  },
   playActions: (actions: any, zone: any, monitors: any) =>
     ipcRenderer.invoke(IPC.PLAY_ACTIONS, actions, zone, monitors),
 

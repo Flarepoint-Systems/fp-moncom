@@ -80,6 +80,7 @@ Phases are ordered by dependency, not by appetite — each builds on the last. E
 **Status: largely complete.** Playback moved to a native koffi `SendInput` engine (`src/main/input.ts`) — no PowerShell on the unattended path. Recording extended for modifiers + scroll. The editor gained inline editing, drag-reorder, and test-from-step. Plus the headline robustness win: DOM-driven web login for URL zones. Remaining: end-to-end reboot validation with a real dashboard.
 
 - [x] Playback rewritten on native `SendInput` (`input.ts`) — clean modifier combos + scroll, no per-playback `Add-Type` latency.
+- [x] Recording rewritten on native low-level hooks (`recorder-host.ts`), closing the last PowerShell + `Add-Type` path in the app. The hooks live in a child process (MonCOM's own binary under `ELECTRON_RUN_AS_NODE`) because a hook proc must answer within ~300ms or Windows drops the event, so it cannot share a thread with the app's work. Events outside the zone rectangle are now kept rather than discarded, and the recorder reports its state to the UI instead of failing silently.
 - [x] Inline editing of recorded delays and click coordinates (Automation panel).
 - [x] Reorder actions by drag.
 - [x] Modifier combos (Ctrl+T) + scroll — recorder captures modifier state & wheel; player replays them.

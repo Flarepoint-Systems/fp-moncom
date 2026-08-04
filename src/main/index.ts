@@ -285,7 +285,11 @@ app.whenReady().then(() => {
 
   // Automation: recording & playback
   ipcMain.handle(IPC.START_RECORDING, (_event, zone, monitors) => {
-    return startRecording(zone, monitors);
+    return startRecording(zone, monitors, (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.RECORDING_STATUS, status);
+      }
+    });
   });
   ipcMain.handle(IPC.STOP_RECORDING, () => {
     return stopRecording();

@@ -185,6 +185,8 @@ With a zone selected that has content assigned, scroll down to the **Automation*
 5. Your actions appear in a list. Use **Play** to test them, or **Clear** to start over.
 6. You can also manually add "type text" actions for entering text strings.
 
+While recording, the panel shows a live count of what has been captured, so you can tell straight away that your clicks are landing. Clicks outside the zone rectangle are kept too (a login dialog that opens elsewhere still replays correctly), and the panel says how many there were.
+
 Actions are saved with the preset and replay automatically after the zone content launches.
 
 ### 6. Automate

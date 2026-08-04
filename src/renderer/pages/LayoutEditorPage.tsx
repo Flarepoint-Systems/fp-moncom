@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Monitor, Save, Trash2, Play, Globe, AppWindow, Grid2x2, Grid3x3, Columns2, Rows2, Check, FolderOpen, Circle, Square, MousePointerClick, Keyboard, Type, X, GripVertical, MoveVertical } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
-import type { MonitorInfo, Zone, ZoneContent, Preset, AutomationAction, WebLoginStep } from '../../shared/types';
+import type { MonitorInfo, Zone, ZoneContent, Preset, AutomationAction, RecordingStatus, WebLoginStep } from '../../shared/types';
 import { formatApplyResult } from '../applyResultMessage';
 
 type SplitTemplate = {
@@ -653,6 +653,7 @@ function AutomationPanel({ zone, monitors, actions, onActionsChange, onLaunchDel
   onLaunchDelayChange: (delay: number) => void;
 }) {
   const [recording, setRecording] = useState(false);
+  const [recordStatus, setRecordStatus] = useState<RecordingStatus | null>(null);
   const [countdown, setCountdown] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -665,6 +666,14 @@ function AutomationPanel({ zone, monitors, actions, onActionsChange, onLaunchDel
 
   const [launching, setLaunching] = useState(false);
   const launchDelay = zone.content?.launchDelay ?? 0;
+
+  useEffect(() => {
+    // Stay in the recording state on error so Stop can still hand back what was captured.
+    return window.moncom?.onRecordingStatus((status) => {
+      setRecordStatus(status);
+      if (status.error) setStatusMessage(`${status.error} Press Stop to keep what was captured.`);
+    });
+  }, []);
 
   const handleStartRecording = async () => {
     if (!zone.content) return;
@@ -701,15 +710,19 @@ function AutomationPanel({ zone, monitors, actions, onActionsChange, onLaunchDel
     setLaunching(false);
 
     const started = await window.moncom?.startRecording(zone, monitors);
-    if (started) {
+    if (started?.ok) {
+      setRecordStatus({ captured: 0, outsideZone: 0 });
       setRecording(true);
       setStatusMessage(null);
+    } else {
+      setStatusMessage(started?.error ?? 'The recorder could not be started.');
     }
   };
 
   const handleStopRecording = async () => {
     const recorded = await window.moncom?.stopRecording();
     setRecording(false);
+    setRecordStatus(null);
     if (recorded && recorded.length > 0) {
       onActionsChange([...actions, ...recorded]);
     }
@@ -903,9 +916,25 @@ function AutomationPanel({ zone, monitors, actions, onActionsChange, onLaunchDel
 
       {/* Recording indicator */}
       {recording && (
-        <div className="flex items-center gap-2 mt-3 py-2 px-3 bg-danger/10 border border-danger/20 rounded-lg">
-          <div className="w-2 h-2 rounded-full bg-danger animate-pulse" />
-          <span className="text-[11px] text-danger font-medium">Recording... interact with target window, then click Stop</span>
+        <div className="mt-3 py-2 px-3 bg-danger/10 border border-danger/20 rounded-lg">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-danger animate-pulse" />
+            <span className="text-[11px] text-danger font-medium">
+              {recordStatus && recordStatus.captured > 0
+                ? `Recording... ${recordStatus.captured} captured`
+                : 'Recording... interact with target window, then click Stop'}
+            </span>
+          </div>
+          {recordStatus && recordStatus.captured === 0 && (
+            <div className="mt-1 pl-4 text-[10px] text-text-muted">
+              Nothing captured yet. Every click and keystroke should show up here as you make it.
+            </div>
+          )}
+          {recordStatus && recordStatus.outsideZone > 0 && (
+            <div className="mt-1 pl-4 text-[10px] text-warning">
+              {recordStatus.outsideZone} landed outside this zone (kept — they replay at the same spot).
+            </div>
+          )}
         </div>
       )}
 

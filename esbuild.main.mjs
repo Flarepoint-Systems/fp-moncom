@@ -7,6 +7,8 @@ await build({
     'src/main/index.ts',
     'src/main/preload.ts',
     'src/main/zone-preload.ts',
+    // Spawned as its own process (ELECTRON_RUN_AS_NODE), so it needs its own bundle.
+    'src/main/recorder-host.ts',
   ],
   bundle: true,
   platform: 'node',

@@ -1,11 +1,17 @@
 import { ChildProcess, spawn } from 'child_process';
-import type { AutomationAction, KeyModifier, Zone } from '../shared/types';
+import * as path from 'path';
+import type { AutomationAction, KeyModifier, RecordingStatus, StartRecordingResult, Zone } from '../shared/types';
 import * as input from './input';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** How long the recorder host gets to install its hooks before we call it dead. */
+const HOST_READY_TIMEOUT_MS = 10000;
+
 let recordingProcess: ChildProcess | null = null;
 let recordedActions: AutomationAction[] = [];
+/** Per-action capture metadata, index-aligned with `recordedActions`. Not persisted. */
+let recordedMeta: { pid: number; insideZone: boolean }[] = [];
 
 /** Calculate absolute pixel bounds for a zone given its monitor info */
 function getZoneBounds(zone: Zone, monitors: any[]): { x: number; y: number; w: number; h: number } {
@@ -19,282 +25,183 @@ function getZoneBounds(zone: Zone, monitors: any[]): { x: number; y: number; w: 
   };
 }
 
-// ─── C# type for input recording (global mouse + keyboard hooks) ───
-
-const RECORDER_TYPE = `
-Add-Type @"
-using System;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Text;
-
-public class InputRecorder {
-    private const int WH_MOUSE_LL = 14;
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_LBUTTONDOWN = 0x0201;
-    private const int WM_RBUTTONDOWN = 0x0204;
-    private const int WM_MOUSEWHEEL = 0x020A;
-    private const int WM_KEYDOWN = 0x0100;
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT { public int x; public int y; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MSLLHOOKSTRUCT {
-        public POINT pt;
-        public uint mouseData;
-        public uint flags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct KBDLLHOOKSTRUCT {
-        public uint vkCode;
-        public uint scanCode;
-        public uint flags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MSG {
-        public IntPtr hwnd;
-        public uint message;
-        public IntPtr wParam;
-        public IntPtr lParam;
-        public uint time;
-        public POINT pt;
-    }
-
-    public delegate IntPtr LowLevelProc(int nCode, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelProc lpfn, IntPtr hMod, uint dwThreadId);
-
-    [DllImport("user32.dll")]
-    public static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("kernel32.dll")]
-    public static extern IntPtr GetModuleHandle(string lpModuleName);
-
-    [DllImport("user32.dll")]
-    public static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
-
-    [DllImport("user32.dll")]
-    public static extern bool GetCursorPos(out POINT lpPoint);
-
-    [DllImport("user32.dll")]
-    public static extern short GetAsyncKeyState(int vKey);
-
-    private static IntPtr mouseHook = IntPtr.Zero;
-    private static IntPtr keyHook = IntPtr.Zero;
-    private static LowLevelProc mouseDelegate;
-    private static LowLevelProc keyDelegate;
-    private static long lastEventTime;
-    private static int bX, bY, bW, bH;
-
-    private static bool InBounds(int px, int py) {
-        return px >= bX && px < bX + bW && py >= bY && py < bY + bH;
-    }
-
-    private static void Emit(string json) {
-        Console.WriteLine(json);
-        Console.Out.Flush();
-    }
-
-    // Invariant-culture format so decimals always use '.' regardless of the
-    // machine's locale (e.g. nl-NL would otherwise emit '0,5' and break JSON).
-    private static string F6(double v) {
-        return v.ToString("F6", System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-    private static long NextDelay() {
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        long delay = now - lastEventTime;
-        lastEventTime = now;
-        return delay;
-    }
-
-    private static IntPtr MouseCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0) {
-            int msg = wParam.ToInt32();
-            if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) {
-                var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-                if (InBounds(info.pt.x, info.pt.y)) {
-                    double relX = (double)(info.pt.x - bX) / bW;
-                    double relY = (double)(info.pt.y - bY) / bH;
-                    long delay = NextDelay();
-                    string clickType = msg == WM_RBUTTONDOWN ? "right-click" : "click";
-                    Emit("{\\"type\\":\\"" + clickType + "\\",\\"x\\":" + F6(relX) + ",\\"y\\":" + F6(relY) + ",\\"delay\\":" + delay + "}");
-                }
-            } else if (msg == WM_MOUSEWHEEL) {
-                var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-                if (InBounds(info.pt.x, info.pt.y)) {
-                    short delta = (short)((info.mouseData >> 16) & 0xFFFF);
-                    int notches = delta / 120;
-                    double relX = (double)(info.pt.x - bX) / bW;
-                    double relY = (double)(info.pt.y - bY) / bH;
-                    long delay = NextDelay();
-                    Emit("{\\"type\\":\\"scroll\\",\\"x\\":" + F6(relX) + ",\\"y\\":" + F6(relY) + ",\\"deltaY\\":" + notches + ",\\"delay\\":" + delay + "}");
-                }
-            }
-        }
-        return CallNextHookEx(mouseHook, nCode, wParam, lParam);
-    }
-
-    private static bool IsModifierVk(uint vk) {
-        // Ctrl/Alt/Shift/Win (generic + left/right variants 0xA0-0xA5).
-        return vk == 0x10 || vk == 0x11 || vk == 0x12 || vk == 0x5B || vk == 0x5C || (vk >= 0xA0 && vk <= 0xA5);
-    }
-
-    private static string ModifiersJson() {
-        var list = new System.Collections.Generic.List<string>();
-        if ((GetAsyncKeyState(0x11) & 0x8000) != 0) list.Add("\\"ctrl\\"");
-        if ((GetAsyncKeyState(0x12) & 0x8000) != 0) list.Add("\\"alt\\"");
-        if ((GetAsyncKeyState(0x10) & 0x8000) != 0) list.Add("\\"shift\\"");
-        if (((GetAsyncKeyState(0x5B) & 0x8000) != 0) || ((GetAsyncKeyState(0x5C) & 0x8000) != 0)) list.Add("\\"win\\"");
-        return String.Join(",", list.ToArray());
-    }
-
-    private static IntPtr KeyCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && wParam.ToInt32() == WM_KEYDOWN) {
-            POINT cursorPos;
-            GetCursorPos(out cursorPos);
-            if (InBounds(cursorPos.x, cursorPos.y)) {
-                var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-                // Don't emit standalone modifier presses — they're captured as the
-                // modifiers of the next real key (e.g. Ctrl+T becomes one key action).
-                if (!IsModifierVk(info.vkCode)) {
-                    long delay = NextDelay();
-                    string mods = ModifiersJson();
-                    string modsField = mods.Length > 0 ? (",\\"modifiers\\":[" + mods + "]") : "";
-                    Emit("{\\"type\\":\\"key\\",\\"vkCode\\":" + info.vkCode + modsField + ",\\"delay\\":" + delay + "}");
-                }
-            }
-        }
-        return CallNextHookEx(keyHook, nCode, wParam, lParam);
-    }
-
-    public static void Start(int x, int y, int w, int h) {
-        bX = x; bY = y; bW = w; bH = h;
-        lastEventTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        mouseDelegate = new LowLevelProc(MouseCallback);
-        keyDelegate = new LowLevelProc(KeyCallback);
-
-        using (var proc = Process.GetCurrentProcess())
-        using (var mod = proc.MainModule) {
-            IntPtr hMod = GetModuleHandle(mod.ModuleName);
-            mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseDelegate, hMod, 0);
-            keyHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyDelegate, hMod, 0);
-        }
-
-        // Signal ready
-        Emit("{\\"type\\":\\"ready\\"}");
-
-        // Message pump — keeps hooks alive
-        MSG msg;
-        while (GetMessage(out msg, IntPtr.Zero, 0, 0)) { }
-    }
-}
-"@
-`;
-
 // ─── Recording ───
 
+/** One JSON line from the recorder host. Coordinates are absolute screen pixels. */
+interface HostEvent {
+  type: 'ready' | 'error' | 'click' | 'scroll' | 'key';
+  message?: string;
+  button?: 'left' | 'right';
+  x?: number;
+  y?: number;
+  notches?: number;
+  vkCode?: number;
+  modifiers?: string[];
+  pid?: number;
+  t?: number;
+}
+
 /**
- * Start recording input events within a zone's bounds.
- * Returns true if recording started successfully.
+ * Start recording input within a zone's bounds.
+ *
+ * Every event is kept, whether or not it lands inside the zone — a click that
+ * falls outside still replays at the right place (the zone rect is only a
+ * coordinate frame), and silently dropping them is what made a failed recording
+ * indistinguishable from a working one. `onStatus` reports live counts so the
+ * UI can show that capture is actually happening.
  */
-export function startRecording(zone: Zone, monitors: any[]): boolean {
+export function startRecording(
+  zone: Zone,
+  monitors: any[],
+  onStatus?: (status: RecordingStatus) => void,
+): Promise<StartRecordingResult> {
   if (recordingProcess) {
-    console.log('[MonCOM] Recording already in progress');
-    return false;
+    return Promise.resolve({ ok: false as const, error: 'A recording is already in progress.' });
   }
 
   const bounds = getZoneBounds(zone, monitors);
   recordedActions = [];
+  recordedMeta = [];
 
-  const script = `${RECORDER_TYPE}\n[InputRecorder]::Start(${bounds.x}, ${bounds.y}, ${bounds.w}, ${bounds.h})`;
-
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '-'], {
-    stdio: ['pipe', 'pipe', 'pipe'],
+  const hostPath = path.join(__dirname, 'recorder-host.js');
+  const child = spawn(process.execPath, [hostPath, String(process.pid)], {
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   });
 
-  let buffer = '';
+  return new Promise<StartRecordingResult>((resolve) => {
+    let settled = false;
+    let stderr = '';
+    let lastEventTime = 0;
+    let outsideZone = 0;
 
-  child.stdout.on('data', (data: Buffer) => {
-    buffer += data.toString();
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const event = JSON.parse(trimmed);
-        if (event.type === 'ready') {
-          console.log('[MonCOM] Recording started');
-          continue;
-        }
-        // First real action gets delay set to 0
-        if (recordedActions.length === 0) {
-          event.delay = 0;
-        }
-        recordedActions.push(event as AutomationAction);
-        console.log(`[MonCOM] Recorded: ${event.type} (${recordedActions.length} actions)`);
-      } catch (e) {
-        console.error('[MonCOM] Failed to parse recording event:', trimmed);
+    const finish = (result: StartRecordingResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(readyTimer);
+      if (!result.ok) {
+        if (recordingProcess === child) recordingProcess = null;
+        child.kill();
       }
-    }
+      resolve(result);
+    };
+
+    const readyTimer = setTimeout(() => {
+      finish({ ok: false, error: `Recorder did not start within ${HOST_READY_TIMEOUT_MS / 1000}s.` });
+    }, HOST_READY_TIMEOUT_MS);
+
+    const handleEvent = (event: HostEvent) => {
+      if (event.type === 'ready') {
+        console.log('[MonCOM] Recorder host ready');
+        recordingProcess = child;
+        finish({ ok: true });
+        return;
+      }
+      if (event.type === 'error') {
+        console.error('[MonCOM] Recorder host error:', event.message);
+        finish({ ok: false, error: event.message ?? 'Recorder failed to start.' });
+        return;
+      }
+
+      const x = event.x ?? 0;
+      const y = event.y ?? 0;
+      const insideZone = x >= bounds.x && x < bounds.x + bounds.w && y >= bounds.y && y < bounds.y + bounds.h;
+      if (!insideZone) outsideZone++;
+
+      const now = event.t ?? Date.now();
+      const delay = recordedActions.length === 0 ? 0 : Math.max(0, now - lastEventTime);
+      lastEventTime = now;
+
+      const relX = (x - bounds.x) / bounds.w;
+      const relY = (y - bounds.y) / bounds.h;
+
+      let action: AutomationAction | null = null;
+      if (event.type === 'click') {
+        action = { type: event.button === 'right' ? 'right-click' : 'click', x: relX, y: relY, delay };
+      } else if (event.type === 'scroll') {
+        action = { type: 'scroll', x: relX, y: relY, deltaY: event.notches ?? 0, delay };
+      } else if (event.type === 'key') {
+        action = { type: 'key', vkCode: event.vkCode ?? 0, delay };
+        if (event.modifiers && event.modifiers.length > 0) {
+          action.modifiers = event.modifiers as KeyModifier[];
+        }
+      }
+      if (!action) return;
+
+      recordedActions.push(action);
+      recordedMeta.push({ pid: event.pid ?? 0, insideZone });
+      onStatus?.({ captured: recordedActions.length, outsideZone, lastType: action.type });
+    };
+
+    let buffer = '';
+    child.stdout.on('data', (data: Buffer) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          handleEvent(JSON.parse(trimmed) as HostEvent);
+        } catch {
+          console.error('[MonCOM] Unparseable recorder line:', trimmed);
+        }
+      }
+    });
+
+    child.stderr.on('data', (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (!msg) return;
+      stderr += `${msg}\n`;
+      console.error('[MonCOM] Recorder stderr:', msg);
+    });
+
+    child.on('error', (err) => {
+      console.error('[MonCOM] Recorder spawn failed:', err);
+      finish({ ok: false, error: `Recorder could not be started: ${err.message}` });
+    });
+
+    child.on('close', (code) => {
+      console.log(`[MonCOM] Recorder host exited with code ${code}`);
+      const wasRecording = recordingProcess === child;
+      if (wasRecording) recordingProcess = null;
+      // Exit before ready means startup failed; exit after means it died mid-session.
+      finish({ ok: false, error: stderr.trim() || `Recorder exited with code ${code}.` });
+      if (wasRecording) {
+        onStatus?.({
+          captured: recordedActions.length,
+          outsideZone,
+          error: stderr.trim() || `Recorder stopped unexpectedly (exit code ${code}).`,
+        });
+      }
+    });
   });
-
-  child.stderr.on('data', (data: Buffer) => {
-    const msg = data.toString().trim();
-    if (msg) console.error('[MonCOM] Recorder stderr:', msg);
-  });
-
-  child.on('close', (code) => {
-    console.log(`[MonCOM] Recorder process exited with code ${code}`);
-    recordingProcess = null;
-  });
-
-  child.on('error', (err) => {
-    console.error('[MonCOM] Recorder process error:', err);
-    recordingProcess = null;
-  });
-
-  child.stdin.write(script);
-  child.stdin.end();
-
-  recordingProcess = child;
-  return true;
 }
 
 /**
  * Stop recording and return the captured actions.
  */
 export function stopRecording(): AutomationAction[] {
-  if (!recordingProcess) {
+  if (recordingProcess) {
+    recordingProcess.kill();
+    recordingProcess = null;
+  } else if (recordedActions.length === 0) {
     console.log('[MonCOM] No recording in progress');
     return [];
   }
 
-  recordingProcess.kill();
-  recordingProcess = null;
-
   const actions = [...recordedActions];
+  const meta = [...recordedMeta];
   recordedActions = [];
+  recordedMeta = [];
 
-  // Drop the last action if it's a click — that's the user clicking "Stop Recording"
-  if (actions.length > 0) {
-    const last = actions[actions.length - 1];
-    if (last.type === 'click' || last.type === 'right-click') {
+  // A trailing click on MonCOM itself is the user pressing "Stop Recording", not part of the sequence.
+  const lastIndex = actions.length - 1;
+  if (lastIndex >= 0) {
+    const last = actions[lastIndex];
+    const isClick = last.type === 'click' || last.type === 'right-click';
+    if (isClick && meta[lastIndex]?.pid === process.pid) {
       actions.pop();
     }
   }

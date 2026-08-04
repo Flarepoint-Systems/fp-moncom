@@ -51,6 +51,21 @@ export interface AutomationAction {
   delay: number;
 }
 
+/** Result of asking the main process to start recording. */
+export type StartRecordingResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/** Live recorder progress, pushed to the renderer while a recording runs. */
+export interface RecordingStatus {
+  captured: number;
+  /** Captured events that landed outside the zone rectangle. Kept, not discarded. */
+  outsideZone: number;
+  lastType?: AutomationAction['type'];
+  /** Set when the recorder died mid-session; recording is over. */
+  error?: string;
+}
+
 /**
  * A DOM-driven login/setup step for a URL zone. Because MonCOM owns the
  * BrowserWindow, these run via injected JS against CSS selectors — robust to
@@ -217,6 +232,8 @@ export const IPC = {
   FIND_WINDOWS: 'find-windows',
   START_RECORDING: 'start-recording',
   STOP_RECORDING: 'stop-recording',
+  /** Main -> renderer: live capture counts while recording. */
+  RECORDING_STATUS: 'recording-status',
   PLAY_ACTIONS: 'play-actions',
   IS_ELEVATED: 'is-elevated',
   IDENTIFY_MONITOR: 'identify-monitor',

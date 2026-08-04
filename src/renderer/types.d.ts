@@ -7,6 +7,8 @@ import type {
   LaunchZoneResult,
   MonitorInfo,
   Preset,
+  RecordingStatus,
+  StartRecordingResult,
   Zone,
 } from '../shared/types';
 
@@ -29,8 +31,10 @@ export interface MonCOMAPI {
   registerHotkeys(): Promise<{ failed: { presetId: string; accelerator: string }[] }>;
   applyPreset(preset: Preset): Promise<ApplyPresetResult>;
   pickExecutable(): Promise<string | null>;
-  startRecording(zone: Zone, monitors: MonitorInfo[]): Promise<boolean>;
+  startRecording(zone: Zone, monitors: MonitorInfo[]): Promise<StartRecordingResult>;
   stopRecording(): Promise<AutomationAction[]>;
+  /** Subscribe to live recorder progress. Returns an unsubscribe function. */
+  onRecordingStatus(cb: (status: RecordingStatus) => void): () => void;
   playActions(actions: AutomationAction[], zone: Zone, monitors: MonitorInfo[]): Promise<boolean>;
   isElevated(): Promise<boolean>;
   identifyMonitors(): Promise<void>;
