@@ -2,9 +2,13 @@ name: Release
 
 # Builds the Windows installer + portable on every version tag and drafts a
 # GitHub release with the artifacts, an auto-update feed (latest.yml), and
-# SHA256 checksums. The release is created as a DRAFT so a human reviews it
-# before it goes public — the auto-updater only sees published, non-draft
-# releases, so publishing the draft is what ships an update to users.
+# SHA256 checksums. Release notes are generated from the commits since the
+# previous tag by scripts/gen-notes.mjs. The release is created as a DRAFT so a
+# human reviews it before it goes public — the auto-updater only sees published,
+# non-draft releases, so publishing the draft is what ships an update to users.
+#
+# Cut a release with `npm run release <version>` (scripts/release.mjs), which
+# bumps, commits, tags and pushes; the tag push is what starts this workflow.
 #
 # A manual run (workflow_dispatch) builds and uploads artifacts as a CI check
 # but does not create a release (there's no tag to attach it to).
@@ -24,6 +28,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        # Full history + tags so gen-notes can range from the previous tag.
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -54,8 +61,12 @@ jobs:
           Get-Content release/checksums.txt
 
           $ver = $env:GITHUB_REF_NAME.TrimStart('v')
+          # Commit-derived Features / Bug Fixes / Commits, since the previous tag.
+          $changes = node scripts/gen-notes.mjs $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { throw 'gen-notes.mjs failed' }
+
           $notes = @()
-          $notes += "MonCOM $env:GITHUB_REF_NAME"
+          $notes += $changes
           $notes += ''
           $notes += '## Downloads'
           $notes += "- **MonCOM-Setup-$ver.exe** is the installer (recommended; supports auto-update)."
