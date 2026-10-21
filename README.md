@@ -209,7 +209,7 @@ In **Settings**, enable **Launch on startup** and pick your preset under **Auto-
 
 ```bash
 # Clone the repository
-git clone https://github.com/flarepoint/fp-moncom.git
+git clone https://github.com/Flarepoint-Systems/fp-moncom.git
 cd fp-moncom
 
 # Install dependencies

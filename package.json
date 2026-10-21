@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SlashyIsTaken/fp-moncom.git"
+    "url": "https://github.com/Flarepoint-Systems/fp-moncom.git"
   },
   "scripts": {
     "dev:renderer": "vite",
@@ -39,7 +39,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "SlashyIsTaken",
+        "owner": "Flarepoint-Systems",
         "repo": "fp-moncom"
       }
     ],
