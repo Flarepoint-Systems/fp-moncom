@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Monitor, Save, Trash2, Play, Globe, AppWindow, Grid2x2, Grid3x3, Columns2, Rows2, Check, FolderOpen, Circle, Square, MousePointerClick, Keyboard, Type, X, GripVertical, MoveVertical } from 'lucide-react';
+import { Monitor, Save, Trash2, Play, Globe, AppWindow, Grid2x2, Grid3x3, Columns2, Rows2, Check, FolderOpen, Circle, Square, MousePointerClick, Keyboard, Type, X, GripVertical, MoveVertical, ArrowLeftRight, Unplug } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import type { MonitorInfo, Zone, ZoneContent, Preset, AutomationAction, RecordingStatus, WebLoginStep } from '../../shared/types';
 import { formatApplyResult } from '../applyResultMessage';
@@ -64,6 +64,10 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
+  const [mapDrag, setMapDrag] = useState<{ kind: 'zone' | 'monitor'; id: string } | null>(null);
+  const [dropMonitorId, setDropMonitorId] = useState<string | null>(null);
+  const [orderDragIndex, setOrderDragIndex] = useState<number | null>(null);
+  const [orderDropIndex, setOrderDropIndex] = useState<number | null>(null);
 
   useEffect(() => {
     window.moncom?.getMonitors().then(setMonitors);
@@ -84,7 +88,6 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
 
   const applyTemplate = useCallback((monitor: MonitorInfo, template: SplitTemplate) => {
     setZones(prev => {
-      const others = prev.filter(z => z.monitorId !== monitor.id);
       const newZones = template.zones.map(z => ({
         id: makeZoneId(),
         monitorId: monitor.id,
@@ -92,7 +95,11 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
         x: z.x, y: z.y, width: z.width, height: z.height,
         content: null,
       }));
-      return [...others, ...newZones];
+      // Take the replaced zones' slot in the launch order rather than moving to the end.
+      const at = prev.findIndex(z => z.monitorId === monitor.id);
+      const others = prev.filter(z => z.monitorId !== monitor.id);
+      const insertAt = at === -1 ? others.length : prev.slice(0, at).filter(z => z.monitorId !== monitor.id).length;
+      return [...others.slice(0, insertAt), ...newZones, ...others.slice(insertAt)];
     });
     setSelectedZone(null);
   }, []);
@@ -100,6 +107,36 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
   const updateZoneContent = useCallback((zoneId: string, content: ZoneContent | null) => {
     setZones(prev => prev.map(z => z.id === zoneId ? { ...z, content } : z));
   }, []);
+
+  const moveZoneToMonitor = useCallback((zoneId: string, monitorId: string) => {
+    setZones(prev => prev.map(z => z.id === zoneId ? { ...z, monitorId } : z));
+  }, []);
+
+  const swapMonitors = useCallback((a: string, b: string) => {
+    if (a === b) return;
+    setZones(prev => prev.map(z =>
+      z.monitorId === a ? { ...z, monitorId: b } : z.monitorId === b ? { ...z, monitorId: a } : z,
+    ));
+  }, []);
+
+  const handleMapDrop = (monitorId: string) => {
+    setDropMonitorId(null);
+    if (mapDrag?.kind === 'zone') moveZoneToMonitor(mapDrag.id, monitorId);
+    else if (mapDrag?.kind === 'monitor') swapMonitors(mapDrag.id, monitorId);
+    setMapDrag(null);
+  };
+
+  const handleOrderDrop = (to: number) => {
+    setOrderDropIndex(null);
+    if (orderDragIndex === null || orderDragIndex === to) { setOrderDragIndex(null); return; }
+    setZones(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(orderDragIndex, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    setOrderDragIndex(null);
+  };
 
   const removeZone = useCallback((zoneId: string) => {
     setZones(prev => prev.filter(z => z.id !== zoneId));
@@ -200,7 +237,7 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
               <h3 className="text-xs font-semibold text-text-muted uppercase tracking-widest">
                 Monitor Map
               </h3>
-              <Tooltip text="Your connected monitors. Click a zone to select it, then set it up in the right panel." />
+              <Tooltip text="Your connected monitors. Click a zone to select it. Drag a zone onto another monitor to move it, or drag a monitor's name tag onto another monitor to swap their zones." />
             </div>
             <div className="flex items-center justify-center">
               <div
@@ -217,9 +254,20 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
                   return (
                     <div
                       key={m.id}
-                      className="absolute border-2 border-border/80 rounded-lg bg-bg-dark overflow-hidden"
+                      onDragOver={(e) => { if (!mapDrag) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropMonitorId(m.id); }}
+                      onDrop={() => handleMapDrop(m.id)}
+                      className={`absolute border-2 rounded-lg bg-bg-dark overflow-hidden transition-colors ${dropMonitorId === m.id && mapDrag ? 'border-commander' : 'border-border/80'}`}
                       style={{ left: mx, top: my, width: mw, height: mh }}
                     >
+                      <span
+                        draggable
+                        onDragStart={(e) => { setMapDrag({ kind: 'monitor', id: m.id }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', m.id); }}
+                        onDragEnd={() => { setMapDrag(null); setDropMonitorId(null); }}
+                        className="absolute top-1 left-1 z-20 flex items-center gap-1 px-1.5 py-0.5 rounded bg-bg-surface/90 border border-border text-[9px] text-text-muted hover:text-text-secondary cursor-grab"
+                        title="Drag onto another monitor to swap their zones"
+                      >
+                        <ArrowLeftRight className="w-2.5 h-2.5" /> {m.name.replace(' (Primary)', '')}
+                      </span>
                       {monitorZones.length === 0 && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-text-muted pointer-events-none">
                           <Monitor className="w-5 h-5 mb-1 opacity-30" />
@@ -229,6 +277,9 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
                       {monitorZones.map((zone) => (
                         <div
                           key={zone.id}
+                          draggable
+                          onDragStart={(e) => { setMapDrag({ kind: 'zone', id: zone.id }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', zone.id); }}
+                          onDragEnd={() => { setMapDrag(null); setDropMonitorId(null); }}
                           onClick={() => setSelectedZone(zone.id)}
                           className={`absolute border transition-all cursor-pointer flex items-center justify-center
                             ${selectedZone === zone.id
@@ -254,6 +305,57 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
               </div>
             </div>
           </div>
+
+          {/* Launch order */}
+          {zones.length > 0 && (
+            <div className="bg-bg-surface border border-border rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-widest">
+                  Launch Order
+                </h3>
+                <Tooltip text="Zones launch top to bottom. Drag to reorder. Empty zones are skipped." />
+              </div>
+              <div className="space-y-1">
+                {zones.map((zone, i) => {
+                  const monitor = monitors.find(m => m.id === zone.monitorId);
+                  return (
+                    <div
+                      key={zone.id}
+                      onDragOver={(e) => { if (orderDragIndex === null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (orderDragIndex !== i) setOrderDropIndex(i); }}
+                      onDrop={() => handleOrderDrop(i)}
+                      onClick={() => setSelectedZone(zone.id)}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded-md border-t-2 cursor-pointer
+                        ${selectedZone === zone.id ? 'bg-commander/15' : 'bg-bg-dark hover:bg-bg-steel/30'}
+                        ${orderDropIndex === i && orderDragIndex !== null && orderDragIndex !== i ? 'border-commander' : 'border-transparent'}
+                        ${orderDragIndex === i ? 'opacity-40' : ''}
+                        ${zone.content ? '' : 'opacity-50'}`}
+                    >
+                      <span
+                        draggable
+                        onDragStart={(e) => { setOrderDragIndex(i); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)); }}
+                        onDragEnd={() => { setOrderDragIndex(null); setOrderDropIndex(null); }}
+                        className="cursor-grab text-text-muted/40 hover:text-text-muted shrink-0"
+                        title="Drag to reorder"
+                      >
+                        <GripVertical className="w-3.5 h-3.5" />
+                      </span>
+                      <span className="w-4 text-[11px] text-text-muted tabular-nums">{i + 1}</span>
+                      <span className="flex-1 min-w-0 text-xs text-text-secondary truncate">
+                        {zone.content?.label || 'Empty'}
+                      </span>
+                      {monitor ? (
+                        <span className="text-[10px] text-text-muted shrink-0">{monitor.name.replace(' (Primary)', '')}</span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[10px] text-warning shrink-0" title={`Saved for ${zone.monitorId}, which isn't connected. Select the zone and pick a monitor.`}>
+                          <Unplug className="w-3 h-3" /> Not connected
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Split templates */}
           <div className="bg-bg-surface border border-border rounded-xl p-6">
@@ -296,12 +398,29 @@ export function LayoutEditorPage({ editingPreset, onNavigate }: LayoutEditorPage
               <Tooltip text="Assigns a website or app to the selected zone." />
             </div>
             {selectedZoneData ? (
+              <>
+              <label className="block mb-4">
+                <span className="block text-[11px] text-text-muted mb-1.5">Monitor</span>
+                <select
+                  value={selectedZoneData.monitorId}
+                  onChange={(e) => moveZoneToMonitor(selectedZoneData.id, e.target.value)}
+                  className="w-full px-3 py-2 bg-bg-dark border border-border rounded-lg text-xs text-text-primary focus:outline-none focus:border-commander/60"
+                >
+                  {!monitors.some(m => m.id === selectedZoneData.monitorId) && (
+                    <option value={selectedZoneData.monitorId}>Not connected ({selectedZoneData.monitorId})</option>
+                  )}
+                  {monitors.map(m => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.width}×{m.height})</option>
+                  ))}
+                </select>
+              </label>
               <ZoneEditor
                 zone={selectedZoneData}
                 monitors={monitors}
                 onUpdate={(content) => updateZoneContent(selectedZoneData.id, content)}
                 onRemove={() => removeZone(selectedZoneData.id)}
               />
+              </>
             ) : (
               <div className="py-8 text-center">
                 <Monitor className="w-8 h-8 text-text-muted/30 mx-auto mb-2" />

@@ -1,123 +1,58 @@
-import { IpcMain, app, screen } from 'electron';
+import { IpcMain, app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { IPC } from '../shared/types';
 import type { Preset, AppSettings, Zone } from '../shared/types';
-import { getStableMonitors } from './monitors';
 import { startupTaskExists } from './startup-task';
-
-interface MonitorBounds { x: number; y: number; width: number; height: number }
 
 // Monitor identity (stable hardware ids + position fallback) lives in monitors.ts.
 
-/** Current monitor list with stable IDs (main-process snapshot). */
-function snapshotMonitors(): { id: string; x: number; y: number; width: number; height: number }[] {
-  return getStableMonitors(screen).map(m => ({ id: m.id, x: m.x, y: m.y, width: m.width, height: m.height }));
-}
+type MonitorRect = { id: string; x: number; y: number; width: number; height: number };
 
 /**
- * Pick the current monitor that best matches a zone whose `monitorId` is stale.
- * Prefers a center-distance match against `monitorBounds` if available; falls
- * back to the only monitor when there's exactly one; otherwise gives up.
+ * Pick a free monitor for a zone whose saved `monitorId` isn't connected: the
+ * one nearest the saved monitor's center, but only if that center still falls
+ * on it. Without saved bounds there's nothing safe to go on, so no match.
  */
-function rematchMonitor(
-  zone: Zone,
-  monitors: { id: string; x: number; y: number; width: number; height: number }[],
-): { id: string; x: number; y: number; width: number; height: number } | null {
-  if (monitors.length === 0) return null;
-  if (zone.monitorBounds) {
-    const zcx = zone.monitorBounds.x + zone.monitorBounds.width / 2;
-    const zcy = zone.monitorBounds.y + zone.monitorBounds.height / 2;
-    let best = monitors[0];
-    let bestDist = Infinity;
-    for (const m of monitors) {
-      const dx = (m.x + m.width / 2) - zcx;
-      const dy = (m.y + m.height / 2) - zcy;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < bestDist) { bestDist = dist; best = m; }
-    }
-    return best;
+function rematchMonitor(zone: Zone, free: MonitorRect[]): MonitorRect | null {
+  if (!zone.monitorBounds || free.length === 0) return null;
+  const zcx = zone.monitorBounds.x + zone.monitorBounds.width / 2;
+  const zcy = zone.monitorBounds.y + zone.monitorBounds.height / 2;
+  let best: MonitorRect | null = null;
+  let bestDist = Infinity;
+  for (const m of free) {
+    const dist = Math.hypot(m.x + m.width / 2 - zcx, m.y + m.height / 2 - zcy);
+    if (dist < bestDist) { bestDist = dist; best = m; }
   }
-  if (monitors.length === 1) return monitors[0];
-  return null;
+  if (!best) return null;
+  const inside = zcx >= best.x && zcx < best.x + best.width && zcy >= best.y && zcy < best.y + best.height;
+  return inside ? best : null;
 }
 
 /**
- * Walk every preset's zones; if a zone's `monitorId` is unknown to the current
- * monitor set, attempt to rematch it. Also refreshes `monitorBounds` so a
- * future rematch (e.g., after the user moves a monitor) has accurate data.
- * Returns the (possibly) updated presets and a flag indicating whether
- * anything changed so callers can decide whether to persist.
+ * Map zones with a stale `monitorId` onto current monitors, in memory only.
+ * Each saved monitor maps to a distinct current monitor, so zones from two
+ * screens never collapse onto one; unmatched zones keep their saved id and
+ * fail at launch as "not connected". Never persisted: the saved preset only
+ * changes when the user saves it.
  */
-function migratePresets(
-  presets: Preset[],
-  monitors: { id: string; x: number; y: number; width: number; height: number }[],
-): { presets: Preset[]; changed: boolean } {
-  let changed = false;
-  const out = presets.map(preset => {
-    const zones = preset.layout.zones.map(zone => {
-      const matched = monitors.find(m => m.id === zone.monitorId)
-        ?? rematchMonitor(zone, monitors);
-      if (!matched) return zone;
-
-      const sameBounds = zone.monitorBounds
-        && zone.monitorBounds.x === matched.x
-        && zone.monitorBounds.y === matched.y
-        && zone.monitorBounds.width === matched.width
-        && zone.monitorBounds.height === matched.height;
-      if (zone.monitorId === matched.id && sameBounds) return zone;
-
-      if (zone.monitorId !== matched.id) {
-        console.log(`[MonCOM] Rematched zone ${zone.id}: ${zone.monitorId} → ${matched.id}`);
-      }
-      changed = true;
-      return {
-        ...zone,
-        monitorId: matched.id,
-        monitorBounds: { x: matched.x, y: matched.y, width: matched.width, height: matched.height },
-      };
-    });
-    if (zones.every((z, i) => z === preset.layout.zones[i])) return preset;
-    return { ...preset, layout: { ...preset.layout, zones } };
+export function resolveZoneMonitors(zones: Zone[], monitors: MonitorRect[]): Zone[] {
+  const connected = new Set(monitors.map(m => m.id));
+  const claimed = new Set(zones.filter(z => connected.has(z.monitorId)).map(z => z.monitorId));
+  const remap = new Map<string, MonitorRect | null>();
+  for (const zone of zones) {
+    if (connected.has(zone.monitorId) || remap.has(zone.monitorId)) continue;
+    const match = rematchMonitor(zone, monitors.filter(m => !claimed.has(m.id)));
+    remap.set(zone.monitorId, match);
+    if (match) {
+      claimed.add(match.id);
+      console.log(`[MonCOM] Rematched monitor ${zone.monitorId} → ${match.id} (not saved)`);
+    }
+  }
+  return zones.map(z => {
+    const m = remap.get(z.monitorId);
+    return m ? { ...z, monitorId: m.id } : z;
   });
-  return { presets: out, changed };
-}
-
-/**
- * Read presets, then migrate any zones referencing stale monitor IDs. If the
- * migration changed anything, persist the corrected presets back to disk so
- * future reads (and the renderer) see consistent data.
- */
-export function loadAndMigratePresets(): Preset[] {
-  const raw = loadPresets();
-  // Only migrate when at least one display is enumerable (after app ready).
-  let monitors: ReturnType<typeof snapshotMonitors>;
-  try { monitors = snapshotMonitors(); } catch { return raw; }
-  if (monitors.length === 0) return raw;
-  const { presets, changed } = migratePresets(raw, monitors);
-  if (changed) savePresets(presets);
-  return presets;
-}
-
-/**
- * Migrate the zones of a single preset against the supplied monitor list.
- * Useful at apply-time when we already have a current monitor snapshot.
- * Persists changes only if the preset already exists on disk.
- */
-export function migrateAndPersistPreset(
-  preset: Preset,
-  monitors: { id: string; x: number; y: number; width: number; height: number }[],
-): Preset {
-  const { presets: [migrated], changed } = migratePresets([preset], monitors);
-  if (changed) {
-    const stored = loadPresets();
-    const idx = stored.findIndex(p => p.id === migrated.id);
-    if (idx >= 0) {
-      stored[idx] = migrated;
-      savePresets(stored);
-    }
-  }
-  return migrated;
 }
 
 function getDataDir(): string {
@@ -183,7 +118,25 @@ export function loadPresets(): Preset[] {
   }
 }
 
+const PRESET_BACKUPS = 5;
+
+/** Shift presets.json → .bak.1 → .bak.2 … so a bad write can always be rolled back by hand. */
+function rotatePresetBackups(): void {
+  const file = getPresetsPath();
+  if (!fs.existsSync(file)) return;
+  try {
+    for (let i = PRESET_BACKUPS - 1; i >= 1; i--) {
+      const from = `${file}.bak.${i}`;
+      if (fs.existsSync(from)) fs.renameSync(from, `${file}.bak.${i + 1}`);
+    }
+    fs.copyFileSync(file, `${file}.bak.1`);
+  } catch (e) {
+    console.error('[MonCOM] Preset backup failed:', e);
+  }
+}
+
 function savePresets(presets: Preset[]): void {
+  rotatePresetBackups();
   fs.writeFileSync(getPresetsPath(), JSON.stringify(presets, null, 2));
 }
 
@@ -214,7 +167,7 @@ function saveSettingsFile(settings: AppSettings): void {
 }
 
 export function registerPresetHandlers(ipcMain: IpcMain) {
-  ipcMain.handle(IPC.GET_PRESETS, () => loadAndMigratePresets());
+  ipcMain.handle(IPC.GET_PRESETS, () => loadPresets());
 
   ipcMain.handle(IPC.SAVE_PRESET, (_event, preset: Preset) => {
     const presets = loadPresets();

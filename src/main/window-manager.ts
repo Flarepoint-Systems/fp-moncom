@@ -4,7 +4,7 @@ import { execSync, spawn } from 'child_process';
 import { IPC } from '../shared/types';
 import type { ApplyPresetResult, CloseAllZonesReport, LaunchZoneResult, WebLoginStep, Zone } from '../shared/types';
 import { playActions } from './automation-manager';
-import { loadSettings, getZoomForUrl, setZoomForUrl, migrateAndPersistPreset } from './preset-store';
+import { loadSettings, getZoomForUrl, setZoomForUrl, resolveZoneMonitors } from './preset-store';
 import { getStableMonitors } from './monitors';
 import { findProfileForExe } from './profile-store';
 import { runProfile } from './profile-runner';
@@ -559,10 +559,18 @@ export function registerWindowHandlers(ipcMain: IpcMain) {
   });
 }
 
+let applyCount = 0;
+
+/** Increments on every apply, so a deferred auto-launch can tell it was superseded. */
+export function getApplyCount(): number {
+  return applyCount;
+}
+
 /**
  * Apply a preset directly from the main process (used by IPC and auto-launch).
  */
 export async function applyPresetFromMain(preset: any, screenModule: Electron.Screen): Promise<ApplyPresetResult> {
+  applyCount++;
   let closeReport: CloseAllZonesReport | undefined;
   // Close any existing launched windows first
   if (hasLaunchedWindows()) {
@@ -571,13 +579,10 @@ export async function applyPresetFromMain(preset: any, screenModule: Electron.Sc
 
   const monitors = getStableMonitors(screenModule);
 
-  // Rematch any zones whose monitorId is stale (e.g., post-reboot when display
-  // IDs shift, or after the user reorganized their monitors). Persists changes
-  // when the preset is a saved one so the renderer also sees the corrected IDs.
-  const migrated = migrateAndPersistPreset(preset, monitors);
+  const zones = resolveZoneMonitors(preset.layout.zones, monitors);
 
   const results: LaunchZoneResult[] = [];
-  for (const zone of migrated.layout.zones) {
+  for (const zone of zones) {
     if (zone.content) {
       const launchResult = await launchZoneContent(zone, monitors);
       results.push(launchResult);

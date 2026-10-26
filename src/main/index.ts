@@ -7,6 +7,7 @@ import { registerProfileHandlers } from './profile-store';
 import { getStableMonitors } from './monitors';
 import { startRecording, stopRecording, playActions } from './automation-manager';
 import { initAutoUpdater } from './updater';
+import { autoLaunchWhenReady } from './auto-launch';
 import { registerHotkeys, registerHotkeyHandlers } from './hotkeys';
 import { createStartupTask, removeStartupTask, runStartupTask, startupTaskExists } from './startup-task';
 import type { MonitorInfo } from '../shared/types';
@@ -345,13 +346,7 @@ app.whenReady().then(() => {
     if (settings.autoLaunchPreset && settings.autoLaunchPresetId) {
       const presets = loadPresets();
       const preset = presets.find(p => p.id === settings.autoLaunchPresetId);
-      if (preset) {
-        console.log(`[MonCOM] Auto-launching preset: ${preset.name}`);
-        // Small delay to let monitors settle after boot
-        setTimeout(() => {
-          applyPresetFromMain(preset, screen);
-        }, 3000);
-      }
+      if (preset) autoLaunchWhenReady(preset, screen);
     }
   } catch (e) {
     console.error('[MonCOM] Auto-launch failed:', e);
