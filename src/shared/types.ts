@@ -202,6 +202,21 @@ export interface Preset {
   updatedAt: string;
 }
 
+/** One zone of an import, with the monitor it will land on (null when unmatched). */
+export interface ImportPlanZone {
+  zoneId: string;
+  label: string;
+  savedMonitorId: string;
+  targetMonitorId: string | null;
+}
+
+/** What importing a preset file will do on this machine, shown before it is saved. */
+export interface ImportPlan {
+  zones: ImportPlanZone[];
+  unmatched: number;
+  redactedLogins: number;
+}
+
 /** Application settings */
 export interface AppSettings {
   theme: 'dark';
