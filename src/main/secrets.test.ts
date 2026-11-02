@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sealValue, unsealValue, sealPreset, unsealZone, type SecretCodec } from './secrets';
+import { sealValue, unsealValue, sealPreset, sealPresets, unsealZone, type SecretCodec } from './secrets';
 import { isSealed, SECRET_PREFIX } from '../shared/secrets';
 import type { Preset } from '../shared/types';
 
@@ -9,6 +9,8 @@ const codec: SecretCodec = {
   decrypt: (d) => Buffer.from([...d].map(b => b ^ 0x5a)).toString('utf8'),
 };
 const offline: SecretCodec = { ...codec, available: () => false };
+const encryptThrows: SecretCodec = { ...codec, encrypt: () => { throw new Error('dpapi'); } };
+const decryptThrows: SecretCodec = { ...codec, decrypt: () => { throw new Error('dpapi'); } };
 
 const preset = (): Preset => ({
   id: 'p', name: 'Wall', createdAt: 't', updatedAt: 't',
@@ -44,6 +46,13 @@ describe('sealValue / unsealValue', () => {
   it('passes plain values through unseal', () => {
     expect(unsealValue(codec, 'plain')).toBe('plain');
   });
+  it('sealValue leaves plain text when encrypt throws', () => {
+    expect(sealValue(encryptThrows, 'hunter2')).toBe('hunter2');
+    expect(sealPreset(encryptThrows, preset()).changed).toBe(0);
+  });
+  it('unsealValue returns empty string when decrypt throws', () => {
+    expect(unsealValue(decryptThrows, sealValue(codec, 'x'))).toBe('');
+  });
 });
 
 describe('sealPreset', () => {
@@ -69,6 +78,20 @@ describe('sealPreset', () => {
   });
   it('reports zero changes when codec unavailable', () => {
     expect(sealPreset(offline, preset()).changed).toBe(0);
+  });
+});
+
+describe('sealPresets', () => {
+  it('sealPresets sums changed across presets', () => {
+    const one = (id: string): Preset => {
+      const p = preset();
+      p.id = id;
+      p.layout.zones[0].content!.webLogin = [{ action: 'fill', selector: '#pass', value: 'pw-' + id }];
+      return p;
+    };
+    const { presets, changed } = sealPresets(codec, [one('a'), one('b')]);
+    expect(changed).toBe(2);
+    for (const p of presets) expect(isSealed(p.layout.zones[0].content!.webLogin![0].value)).toBe(true);
   });
 });
 

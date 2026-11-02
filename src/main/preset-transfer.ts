@@ -16,7 +16,7 @@ export interface PresetFile {
 
 export type ParseResult = { ok: true; file: PresetFile } | { ok: false; error: string };
 
-/** Build an export file from a preset. Login values are blanked, sealed or not. */
+/** Build an export file from a preset. Web login values are blanked, sealed or not. */
 export function toPresetFile(preset: Preset, appVersion: string, now: Date): PresetFile {
   const copy: Preset = JSON.parse(JSON.stringify(preset));
   for (const zone of copy.layout.zones) {

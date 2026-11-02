@@ -6,8 +6,8 @@ import { autoUpdater } from 'electron-updater';
  *
  * Only the installed build can self-update: dev has no update feed, and the
  * portable build runs from a throwaway temp extraction with nothing to patch.
- * Both are skipped. The update feed (owner/repo) comes from app-update.yml,
- * which electron-builder generates from the `publish` config in package.json.
+ * Both are skipped. The update feed url comes from app-update.yml, which
+ * electron-builder generates from the `publish` config in package.json.
  *
  * Flow: check on startup, download in the background, and once an update is
  * ready, ask whether to restart now. Declining still installs it on the next

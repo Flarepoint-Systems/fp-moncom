@@ -7,10 +7,19 @@ export interface SecretCodec {
   decrypt(data: Buffer): string;
 }
 
-/** Seals a plain value. Returns it unchanged when the codec is unavailable or it is already sealed. */
+let warnedEncrypt = false;
+
+/** Seals a plain value. Returns it unchanged when the codec is unavailable, encryption fails, or it is already sealed. */
 export function sealValue(codec: SecretCodec, plain: string): string {
   if (isSealed(plain) || !codec.available()) return plain;
-  return SECRET_PREFIX + codec.encrypt(plain).toString('base64');
+  try {
+    return SECRET_PREFIX + codec.encrypt(plain).toString('base64');
+  } catch (e) {
+    // A failed encrypt must not reject the whole save, and one warning per run is enough.
+    if (!warnedEncrypt) console.warn('[MonCOM] Could not encrypt a login value, storing it as typed:', e);
+    warnedEncrypt = true;
+    return plain;
+  }
 }
 
 /** Unseals a value. A sealed value that cannot be decrypted yields '' so ciphertext is never used as a secret. */
@@ -20,7 +29,7 @@ export function unsealValue(codec: SecretCodec, value: string): string {
     if (!codec.available()) throw new Error('secret storage unavailable');
     return codec.decrypt(Buffer.from(value.slice(SECRET_PREFIX.length), 'base64'));
   } catch (err) {
-    console.warn('Could not unseal a stored secret, using an empty value.', err);
+    console.warn('[MonCOM] Could not unseal a stored secret, using an empty value.', err);
     return '';
   }
 }

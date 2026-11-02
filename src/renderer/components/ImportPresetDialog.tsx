@@ -54,7 +54,7 @@ export function ImportPresetDialog({ preview, onCancel, onImport }: ImportPreset
         {(plan.redactedLogins > 0 || plan.unmatched > 0) && (
           <div className="mt-4 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning space-y-1">
             {plan.redactedLogins > 0 && (
-              <p>{plan.redactedLogins} login values are not included and need to be entered again after import.</p>
+              <p>{plan.redactedLogins} web login values are not included and need to be entered again after import.</p>
             )}
             {plan.unmatched > 0 && (
               <p>{plan.unmatched} zones have no matching monitor and can be re-assigned in the Layout Editor.</p>

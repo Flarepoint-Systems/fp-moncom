@@ -107,27 +107,26 @@ function savePresets(presets: Preset[]): void {
   writePresetsFile(presets);
 }
 
-/** Seals any plain login values left in presets.json and its backups. Returns how many were sealed. */
+/** Seals plain login values in presets.json and its backups, rotating first so the live file gets a backup that is then sealed too. Returns how many were sealed. */
 export function migratePresetsAtRest(codec: SecretCodec): number {
+  const live = sealPresets(codec, loadPresets());
+  if (live.changed > 0) rotatePresetBackups();
   let total = 0;
   for (let i = 1; i <= PRESET_BACKUPS; i++) {
     const backup = `${getPresetsPath()}.bak.${i}`;
     if (!fs.existsSync(backup)) continue;
-    let stored: Preset[];
     try {
-      stored = JSON.parse(fs.readFileSync(backup, 'utf-8'));
-    } catch (e) {
-      console.warn(`[MonCOM] Skipping unreadable preset backup ${backup}:`, e);
-      continue;
+      const stored: unknown = JSON.parse(fs.readFileSync(backup, 'utf-8'));
+      if (!Array.isArray(stored)) throw new Error('not a preset list');
+      const { presets, changed } = sealPresets(codec, stored as Preset[]);
+      if (changed > 0) fs.writeFileSync(backup, JSON.stringify(presets, null, 2));
+      total += changed;
+    } catch {
+      console.warn('[MonCOM] Skipping unreadable preset backup:', backup);
     }
-    const { presets, changed } = sealPresets(codec, stored);
-    if (changed > 0) fs.writeFileSync(backup, JSON.stringify(presets, null, 2));
-    total += changed;
   }
-  // No rotation: the backups already hold this data, now sealed.
-  const { presets, changed } = sealPresets(codec, loadPresets());
-  if (changed > 0) writePresetsFile(presets);
-  return total + changed;
+  if (live.changed > 0) writePresetsFile(live.presets);
+  return total + live.changed;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -222,15 +221,20 @@ export function registerPresetHandlers(ipcMain: IpcMain) {
   });
 
   ipcMain.handle(IPC.IMPORT_PRESET_COMMIT, (_event, incoming: Preset, plan: ImportPlan, name: string) => {
-    const monitors = getStableMonitors(screen);
-    const planned = applyImportPlan(incoming, plan, monitors, 'preset-' + Date.now(), new Date().toISOString());
-    planned.name = name.trim() || planned.name;
-    // A hand-edited file can carry plain login values, so they are sealed like any other save.
-    const preset = sealPreset(getSecretCodec(), planned).preset;
-    const presets = loadPresets();
-    presets.push(preset);
-    savePresets(presets);
-    return presets;
+    try {
+      const monitors = getStableMonitors(screen);
+      const planned = applyImportPlan(incoming, plan, monitors, 'preset-' + Date.now(), new Date().toISOString());
+      planned.name = name.trim() || planned.name;
+      // A hand-edited file can carry plain login values, so they are sealed like any other save.
+      const preset = sealPreset(getSecretCodec(), planned).preset;
+      const presets = loadPresets();
+      presets.push(preset);
+      savePresets(presets);
+      return presets;
+    } catch (e) {
+      console.error('[MonCOM] Import failed:', e);
+      return loadPresets();
+    }
   });
 
   ipcMain.handle(IPC.GET_SETTINGS, () => loadSettings());

@@ -212,7 +212,7 @@ export function PresetsPage({ onNavigate, onEditPreset }: PresetsPageProps) {
                   <button
                     onClick={() => handleExport(preset.id)}
                     className="p-2.5 rounded-lg text-text-muted hover:text-commander hover:bg-commander/10 transition-colors"
-                    title="Saves this preset to a file you can import on another machine. Login values are not included."
+                    title="Saves this preset to a file you can import on another machine. Web login values are not included."
                   >
                     <Download className="w-4 h-4" />
                   </button>
