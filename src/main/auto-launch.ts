@@ -8,7 +8,7 @@
 import { Notification, type Screen } from 'electron';
 import type { Preset } from '../shared/types';
 import { getStableMonitors } from './monitors';
-import { resolveZoneMonitors } from './preset-store';
+import { resolveZoneMonitors } from './monitor-rematch';
 import { applyPresetFromMain, getApplyCount } from './window-manager';
 
 const POLL_MS = 5000;
