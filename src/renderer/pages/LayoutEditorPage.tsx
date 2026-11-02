@@ -3,6 +3,8 @@ import { Monitor, Save, Trash2, Play, Globe, AppWindow, Grid2x2, Grid3x3, Column
 import { Tooltip } from '../components/Tooltip';
 import type { MonitorInfo, Zone, ZoneContent, Preset, AutomationAction, RecordingStatus, WebLoginStep } from '../../shared/types';
 import { formatApplyResult } from '../applyResultMessage';
+import { SPLIT_TEMPLATES } from '../../shared/zone-geometry';
+import type { LucideIcon } from 'lucide-react';
 
 type SplitTemplate = {
   name: string;
@@ -10,39 +12,16 @@ type SplitTemplate = {
   zones: { x: number; y: number; width: number; height: number }[];
 };
 
-const splitTemplates: SplitTemplate[] = [
-  { name: 'Full', icon: Monitor, zones: [{ x: 0, y: 0, width: 1, height: 1 }] },
-  { name: '2 Columns', icon: Columns2, zones: [
-    { x: 0, y: 0, width: 0.5, height: 1 },
-    { x: 0.5, y: 0, width: 0.5, height: 1 },
-  ]},
-  { name: '2 Rows', icon: Rows2, zones: [
-    { x: 0, y: 0, width: 1, height: 0.5 },
-    { x: 0, y: 0.5, width: 1, height: 0.5 },
-  ]},
-  { name: '2x2 Grid', icon: Grid2x2, zones: [
-    { x: 0, y: 0, width: 0.5, height: 0.5 },
-    { x: 0.5, y: 0, width: 0.5, height: 0.5 },
-    { x: 0, y: 0.5, width: 0.5, height: 0.5 },
-    { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
-  ]},
-  { name: '3x3 Grid', icon: Grid3x3, zones: [
-    { x: 0, y: 0, width: 1/3, height: 1/3 },
-    { x: 1/3, y: 0, width: 1/3, height: 1/3 },
-    { x: 2/3, y: 0, width: 1/3, height: 1/3 },
-    { x: 0, y: 1/3, width: 1/3, height: 1/3 },
-    { x: 1/3, y: 1/3, width: 1/3, height: 1/3 },
-    { x: 2/3, y: 1/3, width: 1/3, height: 1/3 },
-    { x: 0, y: 2/3, width: 1/3, height: 1/3 },
-    { x: 1/3, y: 2/3, width: 1/3, height: 1/3 },
-    { x: 2/3, y: 2/3, width: 1/3, height: 1/3 },
-  ]},
-  { name: 'Main + Side', icon: Columns2, zones: [
-    { x: 0, y: 0, width: 0.7, height: 1 },
-    { x: 0.7, y: 0, width: 0.3, height: 0.5 },
-    { x: 0.7, y: 0.5, width: 0.3, height: 0.5 },
-  ]},
-];
+const templateIcons: Record<string, LucideIcon> = {
+  'Full': Monitor,
+  '2 Columns': Columns2,
+  '2 Rows': Rows2,
+  '2x2 Grid': Grid2x2,
+  '3x3 Grid': Grid3x3,
+  'Main + Side': Columns2,
+};
+
+const splitTemplates: SplitTemplate[] = SPLIT_TEMPLATES.map(t => ({ ...t, icon: templateIcons[t.name] }));
 
 let zoneIdCounter = 0;
 function makeZoneId() {

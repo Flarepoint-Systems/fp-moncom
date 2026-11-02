@@ -9,6 +9,7 @@ import { getStableMonitors } from './monitors';
 import { findProfileForExe } from './profile-store';
 import { runProfile } from './profile-runner';
 import { normalizeExe } from '../shared/exe';
+import { zoneToScreenRect } from '../shared/zone-geometry';
 import {
   enumWindows,
   waitForWindow,
@@ -376,10 +377,7 @@ async function launchZoneContent(zone: Zone, monitors: any[]): Promise<LaunchZon
     };
   }
 
-  const absX = Math.round(monitor.x + zone.x * monitor.width);
-  const absY = Math.round(monitor.y + zone.y * monitor.height);
-  const absW = Math.round(zone.width * monitor.width);
-  const absH = Math.round(zone.height * monitor.height);
+  const { x: absX, y: absY, width: absW, height: absH } = zoneToScreenRect(zone, monitor);
 
   console.log(`[MonCOM] Zone: ${content.type} "${content.target}" → (${absX}, ${absY}, ${absW}, ${absH})`);
 
