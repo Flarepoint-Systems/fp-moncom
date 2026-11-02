@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from 'child_process';
 import * as path from 'path';
 import type { AutomationAction, KeyModifier, RecordingStatus, StartRecordingResult, Zone } from '../shared/types';
 import * as input from './input';
+import { zoneToScreenRect } from '../shared/zone-geometry';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -17,12 +18,8 @@ let recordedMeta: { pid: number; insideZone: boolean }[] = [];
 function getZoneBounds(zone: Zone, monitors: any[]): { x: number; y: number; w: number; h: number } {
   const monitor = monitors.find((m: any) => m.id === zone.monitorId);
   if (!monitor) throw new Error(`Monitor not found: ${zone.monitorId}`);
-  return {
-    x: Math.round(monitor.x + zone.x * monitor.width),
-    y: Math.round(monitor.y + zone.y * monitor.height),
-    w: Math.round(zone.width * monitor.width),
-    h: Math.round(zone.height * monitor.height),
-  };
+  const r = zoneToScreenRect(zone, monitor);
+  return { x: r.x, y: r.y, w: r.width, h: r.height };
 }
 
 // ─── Recording ───

@@ -2,13 +2,25 @@ import { IpcMain, BrowserWindow, screen } from 'electron';
 import * as path from 'path';
 import { execSync, spawn } from 'child_process';
 import { IPC } from '../shared/types';
-import type { ApplyPresetResult, CloseAllZonesReport, LaunchZoneResult, WebLoginStep, Zone } from '../shared/types';
+import type {
+  ApplyPresetResult,
+  CloseAllZonesReport,
+  LaunchZoneResult,
+  MonitorInfo,
+  Preset,
+  WebLoginStep,
+  Zone,
+} from '../shared/types';
 import { playActions } from './automation-manager';
-import { loadSettings, getZoomForUrl, setZoomForUrl, resolveZoneMonitors } from './preset-store';
+import { loadSettings, getZoomForUrl, setZoomForUrl, getSecretCodec } from './preset-store';
+import { unsealZone } from './secrets';
+import { resolveZoneMonitors } from './monitor-rematch';
 import { getStableMonitors } from './monitors';
 import { findProfileForExe } from './profile-store';
 import { runProfile } from './profile-runner';
+import { runWebLogin, webContentsRunner } from './web-login';
 import { normalizeExe } from '../shared/exe';
+import { zoneToScreenRect } from '../shared/zone-geometry';
 import {
   enumWindows,
   waitForWindow,
@@ -63,57 +75,6 @@ type AppCloseResult = {
  * Launch a URL in a frameless Electron BrowserWindow positioned exactly on the target zone.
  * No PID/HWND detection needed — we own the window.
  */
-/** Wait (poll) for a CSS selector to exist in the page. */
-async function waitForSelector(wc: Electron.WebContents, selector: string, timeoutMs = 15000): Promise<boolean> {
-  const sel = JSON.stringify(selector);
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      if (await wc.executeJavaScript(`!!document.querySelector(${sel})`, true)) return true;
-    } catch { /* page navigating */ }
-    await sleep(300);
-  }
-  return false;
-}
-
-/**
- * Run DOM-driven auto-login steps against a URL zone's BrowserWindow. Uses the
- * native value setter + input/change events so React/Vue-controlled inputs
- * register the change (plain `.value =` doesn't trigger their handlers).
- */
-async function runWebLogin(wc: Electron.WebContents, steps: WebLoginStep[]): Promise<void> {
-  for (const step of steps) {
-    const sel = JSON.stringify(step.selector);
-    try {
-      if (step.action === 'skipIfPresent') {
-        const present = await wc.executeJavaScript(`!!document.querySelector(${sel})`, true).catch(() => false);
-        if (present) {
-          console.log(`[MonCOM] webLogin: logged-in marker present (${step.selector}), skipping remaining steps`);
-          return;
-        }
-      } else if (step.action === 'waitFor') {
-        const ok = await waitForSelector(wc, step.selector);
-        if (!ok) console.warn(`[MonCOM] webLogin waitFor timed out: ${step.selector}`);
-      } else if (step.action === 'fill') {
-        const val = JSON.stringify(step.value ?? '');
-        await wc.executeJavaScript(
-          `(()=>{const el=document.querySelector(${sel});if(!el)return false;el.focus();` +
-          `const proto=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;` +
-          `const d=Object.getOwnPropertyDescriptor(proto,'value');(d&&d.set?d.set.call(el,${val}):el.value=${val});` +
-          `el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`,
-          true,
-        );
-      } else if (step.action === 'click') {
-        await wc.executeJavaScript(`(()=>{const el=document.querySelector(${sel});if(!el)return false;el.click();return true;})()`, true);
-      }
-    } catch (e) {
-      console.error('[MonCOM] webLogin step failed:', step.action, step.selector, e);
-    }
-    if (step.delayMs && step.delayMs > 0) await sleep(step.delayMs);
-  }
-  console.log(`[MonCOM] webLogin completed (${steps.length} steps)`);
-}
-
 function launchURLZone(url: string, x: number, y: number, w: number, h: number, webLogin?: WebLoginStep[]): Promise<void> {
   // Resolves once the page has loaded and any web-login steps have finished, so
   // the caller can run coordinate automation *after* login.
@@ -181,7 +142,7 @@ function launchURLZone(url: string, x: number, y: number, w: number, h: number, 
     if (firstLoad) {
       firstLoad = false;
       if (webLogin && webLogin.length > 0) {
-        try { await runWebLogin(win.webContents, webLogin); }
+        try { await runWebLogin(webContentsRunner(win.webContents), webLogin); }
         catch (e) { console.error('[MonCOM] webLogin failed:', e); }
       }
       clearTimeout(loginSafety);
@@ -358,13 +319,14 @@ async function moveWindowByTitle(hint: string, x: number, y: number, w: number, 
 /**
  * Launch a zone's content and position it.
  */
-async function launchZoneContent(zone: Zone, monitors: any[]): Promise<LaunchZoneResult> {
+async function launchZoneContent(storedZone: Zone, monitors: MonitorInfo[]): Promise<LaunchZoneResult> {
+  const zone = unsealZone(getSecretCodec(), storedZone);
   if (!zone.content) {
     return { success: false, zoneId: zone.id, error: 'Zone has no content assigned' };
   }
   const content = zone.content;
 
-  const monitor = monitors.find((m: any) => m.id === zone.monitorId);
+  const monitor = monitors.find((m) => m.id === zone.monitorId);
   if (!monitor) {
     console.error(`[MonCOM] Monitor not found: ${zone.monitorId}`);
     return {
@@ -376,10 +338,7 @@ async function launchZoneContent(zone: Zone, monitors: any[]): Promise<LaunchZon
     };
   }
 
-  const absX = Math.round(monitor.x + zone.x * monitor.width);
-  const absY = Math.round(monitor.y + zone.y * monitor.height);
-  const absW = Math.round(zone.width * monitor.width);
-  const absH = Math.round(zone.height * monitor.height);
+  const { x: absX, y: absY, width: absW, height: absH } = zoneToScreenRect(zone, monitor);
 
   console.log(`[MonCOM] Zone: ${content.type} "${content.target}" → (${absX}, ${absY}, ${absW}, ${absH})`);
 
@@ -506,7 +465,7 @@ function hasLaunchedWindows(): boolean {
 }
 
 export function registerWindowHandlers(ipcMain: IpcMain) {
-  ipcMain.handle(IPC.LAUNCH_ZONE, async (_event, zone: Zone, monitors: any[]) => {
+  ipcMain.handle(IPC.LAUNCH_ZONE, async (_event, zone: Zone, monitors: MonitorInfo[]) => {
     return launchZoneContent(zone, monitors);
   });
 
@@ -522,7 +481,7 @@ export function registerWindowHandlers(ipcMain: IpcMain) {
     return findWindows();
   });
 
-  ipcMain.handle(IPC.APPLY_PRESET, async (_event, preset: any) => {
+  ipcMain.handle(IPC.APPLY_PRESET, async (_event, preset: Preset) => {
     return applyPresetFromMain(preset, screen);
   });
 
@@ -569,7 +528,7 @@ export function getApplyCount(): number {
 /**
  * Apply a preset directly from the main process (used by IPC and auto-launch).
  */
-export async function applyPresetFromMain(preset: any, screenModule: Electron.Screen): Promise<ApplyPresetResult> {
+export async function applyPresetFromMain(preset: Preset, screenModule: Electron.Screen): Promise<ApplyPresetResult> {
   applyCount++;
   let closeReport: CloseAllZonesReport | undefined;
   // Close any existing launched windows first

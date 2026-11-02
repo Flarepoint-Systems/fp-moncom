@@ -2,7 +2,9 @@
 
 MonCOM is a **command center for Windows**: you describe a wall of apps and dashboards once, and MonCOM launches every one of them into an exact position on your monitors — logged in, navigated, and ready — in a single click or automatically on boot.
 
-This document tracks where MonCOM is today and what's left before it can call itself **v1.0.0**. It is meant to give a realistic, public-facing picture of the project. It is **not** a promise about timelines.
+This document tracks where MonCOM is today, what is left before **v1.0.0**, and the Pro tier that follows it. It is meant to give a realistic picture of the project. It is **not** a promise about timelines.
+
+**Free and Pro.** The reason to install stays free forever: detect monitors, build one preset, auto-launch it on boot, logged in. Pro covers what matters once you run a site: several presets, schedules, awkward applications, and managing all walls from one chair. A free or lapsed machine never loses a wall that already works. The full reasoning is in `docs/superpowers/specs/2026-10-31-moncom-pro-direction-design.md`.
 
 ---
 
@@ -18,17 +20,18 @@ If you want to snap your code editor next to a browser as you work, use FancyZon
 
 ### Deliberately out of scope (to keep the identity sharp)
 - Live, FancyZones-style window snapping, keyboard-drag, and per-app window rules.
-- Linux/macOS builds. The launch path is intentionally deep in Win32; the value proposition is Windows command centers.
-- Cloud sync, accounts, or telemetry. Everything stays on the user's machine.
-- A general scripting/plugin runtime (revisit only if real demand appears post-1.0).
+- Application zones on Linux and macOS. Those platforms get URL-only walls (Phase 9). The native launch path stays Windows.
+- Screen streaming or remote viewing. VNC remains the right tool when you need to see the wall.
+- Telemetry. The free tier needs no account and sends nothing. Pro walls talk to the Flarepoint service for licences, sync and remote control, and the service never holds readable login secrets.
+- A general scripting or plugin runtime, and a community marketplace.
 
 ---
 
-## Where we are: v0.1.1
+## Where we are: v0.4.1
 
-The core loop works end-to-end. You can detect monitors, split them into zones with one of six templates, assign URLs or applications to zones, save the layout as a preset, and apply it again in one click. The app lives in the system tray, can launch on Windows boot, and can auto-apply a chosen preset on startup. The ambitious pieces exist too: per-zone record/replay automation, elevation-aware launching, per-URL zoom, and the monitor-identify overlay.
+Phases 0 to 4 are complete. The wall comes up fast and pixel-exact through a native Win32 layer, monitors are keyed by stable hardware ids, record and replay runs on native input, URL zones log themselves in through DOM-driven steps, stubborn apps are handled by data-driven App Profiles, releases build on tag with an auto-updater, and presets apply from a global hotkey or the command line. MonCOM runs real walls on a job site every morning.
 
-What that means: MonCOM is **usable end-to-end for its core job**, but it has not been hardened for distribution. No tests, no signed builds, no release pipeline, and the launch path — the one thing the whole product rests on — is still slower and less predictable than it needs to be. The pre-release banner stays until the major version hits 1.
+What is missing is trust and a product around it. There are no tests, login secrets sit in plain text, downloads still depend on GitHub, and there is no way to pay for the features a site needs. Phase 5 closes the first gap and ships 1.0. Phases 6 to 9 build the Pro tier.
 
 ---
 
@@ -134,66 +137,77 @@ Phases are ordered by dependency, not by appetite — each builds on the last. E
 
 ---
 
-### Phase 5 — Just enough editing to not look broken
+### Phase 5: Trustworthy 1.0
 
-**Goal:** Add the minimum layout-editing polish so the editor doesn't look half-baked next to rivals — then stop. Explicitly capped.
+**Goal:** Make the free app something a stranger can download and rely on, and freeze it as the permanent free tier.
 
-**Done when:** A user can drag a zone edge to fine-tune a template, draw a one-off custom split, and save the result as a named template that appears beside the built-ins. No further editing investment until post-1.0.
+**Done when:** A tagged 1.0 build installs from flarepoint.nl with a checksum and a SmartScreen explanation, auto-updates from there, passes CI with tests on the zone math, monitor rematch and web-login runner, stores login secrets encrypted, and exports and imports a preset with a monitor remap preview.
 
-- [ ] Drag handles on zone edges to fine-tune a template after applying it.
-- [ ] One "custom split" mode where the user draws zones on the monitor preview.
-- [ ] Save user-made layouts as named templates alongside the six built-ins.
-- [ ] Show real preview content in the zone (favicon for URLs, exe icon for apps) instead of just the label.
-- [ ] **Stop line:** no live snapping, no keyboard-drag, no window rules. That's FancyZones' job.
-
----
-
-### Phase 6 — A thin safety net
-
-**Goal:** Cover the logic that, if it breaks, breaks the wall silently — without pretending to need full test coverage.
-
-**Done when:** CI runs lint, typecheck, and unit tests green on every PR, with the zone-bounds math, preset/monitor rematch (`rematchMonitor`/`migratePresets`), and playback-script generation under test.
-
-- [ ] Unit tests for zone-bounds math, the monitor-rematch/migration logic in `preset-store.ts`, and playback script generation.
-- [ ] Lint + typecheck in CI on every PR.
-- [ ] (Stretch) A headless Electron smoke test asserting the `preload.ts` IPC contract matches what the renderer calls.
+- [ ] Unit tests and CI for the zone-bounds math, `rematchMonitor` and `migratePresets`, and the web-login step runner. Typecheck on every push.
+- [ ] Encrypt web-login values at rest with `safeStorage`. Migrate existing presets on first run.
+- [ ] Preset export and import with monitor remap preview, plus duplicate and rename.
+- [ ] Move downloads and the update feed to flarepoint.nl. One bridge release on GitHub whose updater points at the new feed, then 60 days, then the repository goes private. Versions from 1.0 onward are proprietary.
+- [ ] Published checksums beside each download and a short, honest SmartScreen page the installer links to. Builds stay unsigned for now.
+- [ ] Targeted cleanup of the early code with the tests as a safety net. Not a rewrite.
+- [ ] Drop the pre-release banner.
 
 ---
 
-### Phase 7 — Share and recover a wall
+### Phase 6: Entitlements
 
-**Goal:** Let a preset move between machines and survive a monitor reshuffle — important when the same wall is deployed on more than one command-center PC.
+**Goal:** The app knows whether a machine is Pro, without ever blocking a launch.
 
-**Done when:** You can export a preset on machine A, import it on machine B with a different monitor arrangement, and the import previews a sane monitor remap before committing.
+**Done when:** A machine with no entitlement runs the full free tier. A machine with a valid entitlement unlocks Pro surfaces. Cutting the network or expiring the entitlement past its grace period locks the Pro editing surfaces but the scheduled auto-launch still runs the current preset, verified by test.
 
-- [ ] Export a preset to a `.json` file from the Presets page.
-- [ ] Import a preset from a file, with a monitor-mapping preview before committing.
-- [ ] Duplicate / rename actions on the preset card.
-- [ ] Graceful "monitor IDs changed" handling at apply time — offer a remap instead of silently dropping zones (the `monitorBounds` rematch groundwork already exists).
-
----
-
-## Post-1.0 — only if the niche pulls for it
-
-Not blockers, and not to be started before v1.0.0 ships. Listed so contributors know they're on the radar but parked:
-
-- **Scenes:** switch presets automatically on a trigger (time of day, monitor count, focused app).
-- **Conditional automation:** branch a replay on what's on screen (skip login if already authenticated).
-- **Preset templates gallery:** shareable community walls for common ops stacks.
-- **Record-to-profile:** record an app's launch flow (clicks + the window each one hit) and synthesize an App Profile automatically. Deferred from Phase 2.5 — the structured editor + "Detect open windows" cover authoring today, and recording fits click-heavy logins better than wait/keypress flows like DSS.
+- [ ] Hosted service v1: organisation accounts with invited members, Stripe billing (quantity based, monthly or annual, no trial), entitlement tokens, wall deactivation.
+- [ ] An entitlement module in the main process: load the local token, refresh in the background, expose a single `isPro()` and a reason string. Thirty day grace without contact.
+- [ ] One gating pattern in the renderer: a component that wraps a Pro surface, shows the marked state for free users, and never appears on the launch path.
+- [ ] Sign-in from the Settings page. No account is required for the free tier.
 
 ---
 
-## Where to help
+### Phase 7: Pro on one wall
 
-The highest-impact, least-glamorous places for a new contributor:
+**Goal:** Ship the Pro features that do not need a second machine, so there is something to pay for before the fleet work lands.
 
-- **Phase 1** — window positioning edge cases (ultrawide, fractional scaling, unusual DPI combos) are best found on other people's hardware. File issues with reproducible steps.
-- **Phase 6** — the launch and migration math needs eyes from people who didn't write it.
-- **Phase 0 / 3** — screenshots, the demo GIF, and installer testing on clean machines.
+**Done when:** On a single Pro wall, two presets exist, one is scheduled to come up on weekday mornings and go down in the evening, the wall sleeps and wakes on that schedule for five consecutive days, and a Dahua DSS zone launches from the library recipe.
 
-The scope here is intentionally narrow. Open an issue before anything larger than a small fix so we can check it fits the command-center identity above — features that pull MonCOM back toward "general window manager" will likely be declined, and that's by design.
+- [ ] Multiple presets behind the gate, with the free tier limited to creating one. Presets already on a machine always keep working.
+- [ ] Scheduling and power: schedule editor per preset, Windows scheduled tasks with wake, sleep at the down time, close all zones first. Displays-off as a per-wall fallback. Windows sign-in on wake is a documented prerequisite.
+- [ ] Profile library distribution from the hosted service, with the authoring page gated. The bundled DSS example moves into the library.
 
 ---
 
-*This roadmap will be updated as items land or priorities shift. Last meaningful revision: June 2026 — refocused on the command-center identity.*
+### Phase 8: Fleet
+
+**Goal:** Run every wall on a site from one chair.
+
+**Done when:** From a desk machine, each wall on the site appears in a list with its state, a preset edited once is pushed to three walls with a remap preview on each, and a wall is brought up and taken down remotely, without a tunnel being configured by hand.
+
+- [ ] Method registry, classification and job model from the remote-control design.
+- [ ] Relay through the hosted service. Walls hold an outbound connection, controllers address a wall by id. Per-wall pairing keys, so the relay only ever sees encrypted blobs plus wall name, version, state and current preset name.
+- [ ] Wall registry and a small account dashboard.
+- [ ] Encrypted preset sync and push-to-walls.
+- [ ] Remote take down closes zones and leaves the machine awake. Remote sleep is a separate, labelled action.
+
+---
+
+### Phase 9: URL walls on Linux and macOS
+
+**Goal:** Reach dashboard-style walls that are not on Windows.
+
+**Done when:** A Linux and a macOS build each bring up a three-monitor URL wall on login, logged in, and appear in the fleet list, with the application zone type hidden and explained.
+
+- [ ] Platform seam for monitor identity and auto-launch registration.
+- [ ] Builds and update feeds for both platforms. macOS notarization waits for an Apple Developer account, decided when this phase starts.
+- [ ] Hide and explain the Windows-only features (application zones, recorder, profiles).
+
+---
+
+## Parked
+
+Not planned, listed so they are not forgotten: shutdown plus Wake-on-LAN, offline activation by licence file for air-gapped walls, code signing and notarization, invoice or purchase-order payment, scenes that switch presets on a trigger, record-to-profile, application zones on Linux and macOS, a public template gallery.
+
+---
+
+*Last meaningful revision: November 2026. Phases 5 to 9 follow the Pro direction design in `docs/superpowers/specs/2026-10-31-moncom-pro-direction-design.md`.*

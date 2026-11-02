@@ -13,3 +13,6 @@ tools/capture/*.webm
 
 # tools build artifacts
 tools/_*
+
+# superpowers SDD scratch (ledger, briefs, review packages)
+.superpowers/

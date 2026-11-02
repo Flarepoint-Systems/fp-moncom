@@ -202,6 +202,27 @@ export interface Preset {
   updatedAt: string;
 }
 
+/** One zone of an import, with the monitor it will land on (null when unmatched). */
+export interface ImportPlanZone {
+  zoneId: string;
+  label: string;
+  savedMonitorId: string;
+  targetMonitorId: string | null;
+}
+
+/** What importing a preset file will do on this machine, shown before it is saved. */
+export interface ImportPlan {
+  zones: ImportPlanZone[];
+  unmatched: number;
+  redactedLogins: number;
+}
+
+export type ExportPresetResult = { ok: true; path: string } | { ok: false; error?: string };
+
+export type ImportPresetPreview =
+  | { ok: true; preset: Preset; plan: ImportPlan; monitors: MonitorInfo[] }
+  | { ok: false; error?: string };
+
 /** Application settings */
 export interface AppSettings {
   theme: 'dark';
@@ -246,6 +267,9 @@ export const IPC = {
   SAVE_PROFILE: 'save-profile',
   DELETE_PROFILE: 'delete-profile',
   OPEN_PROFILES_FOLDER: 'open-profiles-folder',
+  EXPORT_PRESET: 'export-preset',
+  IMPORT_PRESET_PREVIEW: 'import-preset-preview',
+  IMPORT_PRESET_COMMIT: 'import-preset-commit',
   /** Sent from URL-zone preload to step zoom in/out (delta: +1 or -1). */
   ZONE_ZOOM_STEP: 'zone-zoom-step',
   /** Sent from URL-zone preload to reset zoom to 1.0. */

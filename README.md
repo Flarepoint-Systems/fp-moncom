@@ -40,7 +40,7 @@ Built for ops walls, dashboard kiosks, and any setup that's more than a couple o
 </tr>
 </table>
 
-> **Note:** MonCOM is in pre-release (v0.x). Features may be incomplete or change, and there is no downloadable build yet. Until then, see [Building from Source](#building-from-source).
+> **Note:** MonCOM is in pre-release (v0.x). Features may be incomplete or change. Download builds from [flarepoint.nl/moncom](https://flarepoint.nl/moncom) or see [Building from Source](#building-from-source).
 
 ---
 
@@ -129,7 +129,7 @@ MonCOM lives in your system tray. Double-click the icon or use the context menu 
 
 ### From a Release
 
-1. Head to the [Releases](../../releases) page.
+1. Go to [flarepoint.nl/moncom](https://flarepoint.nl/moncom).
 2. Download the latest build:
    - **MonCOM-Setup-`<version>`.exe** is the installer. Pick this one if you want MonCOM in your Start menu and automatic updates.
    - **MonCOM-Portable-`<version>`.exe** is the portable build. It runs as a single file with no install, but it does not auto-update.
@@ -137,7 +137,7 @@ MonCOM lives in your system tray. Double-click the icon or use the context menu 
 
 #### About the SmartScreen warning
 
-MonCOM is not code-signed yet, so Windows SmartScreen may say "Windows protected your PC" the first time you run it. That is expected for an unsigned app, not a sign that anything is wrong. To run it, click **More info**, then **Run anyway**.
+MonCOM is not code-signed yet, so Windows SmartScreen may say "Windows protected your PC" the first time you run it. That is expected for an unsigned app, not a sign that anything is wrong. To run it, click **More info**, then **Run anyway**. The [SmartScreen guide](docs/site/smartscreen.md) walks through it.
 
 A code-signing certificate is on the roadmap; until then, verifying the checksum (below) is the way to confirm your download is genuine.
 
@@ -261,6 +261,11 @@ fp-moncom/
 │   │   ├── index.ts                 # App init, window & tray management
 │   │   ├── preload.ts               # Secure IPC bridge (context isolation)
 │   │   ├── window-manager.ts        # Window positioning & zone launching
+│   │   ├── monitor-rematch.ts       # Rematch zones to connected monitors
+│   │   ├── web-login.ts             # DOM-driven web auto-login
+│   │   ├── secrets.ts               # Sealing of login values at rest
+│   │   ├── secrets-electron.ts      # safeStorage codec for secrets.ts
+│   │   ├── preset-transfer.ts       # Preset file format & import planning
 │   │   └── preset-store.ts          # Preset & settings persistence
 │   │
 │   ├── renderer/                    # React frontend
@@ -270,6 +275,7 @@ fp-moncom/
 │   │   ├── components/
 │   │   │   ├── TitleBar.tsx         # Custom frameless window controls
 │   │   │   ├── Sidebar.tsx          # Navigation menu
+│   │   │   ├── ImportPresetDialog.tsx # Import preview & monitor remap
 │   │   │   └── Tooltip.tsx          # Reusable tooltip
 │   │   ├── pages/
 │   │   │   ├── DashboardPage.tsx    # Overview & quick actions
@@ -280,7 +286,10 @@ fp-moncom/
 │   │       └── globals.css          # Theme tokens & animations
 │   │
 │   └── shared/
-│       └── types.ts                 # Shared TypeScript interfaces
+│       ├── types.ts                 # Shared TypeScript interfaces
+│       ├── api.ts                   # window.moncom API contract
+│       ├── secrets.ts               # Sealed-value prefix check
+│       └── zone-geometry.ts         # Zone rect math & split templates
 │
 ├── build/                           # App icons
 ├── esbuild.main.mjs                 # Main process build config
@@ -313,6 +322,8 @@ MonCOM stores its data in your user application data directory:
 ├── presets.json      # Saved layout presets
 └── settings.json     # App settings
 ```
+
+Login values for web zones are stored encrypted. MonCOM uses Windows data protection (through Electron `safeStorage`), so only your Windows account can read them.
 
 No cloud services, no telemetry, no accounts. Everything stays on your machine.
 

@@ -1,59 +1,15 @@
-import { IpcMain, app } from 'electron';
+import { IpcMain, BrowserWindow, app, dialog, screen } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { IPC } from '../shared/types';
-import type { Preset, AppSettings, Zone } from '../shared/types';
+import type { Preset, AppSettings, ExportPresetResult, ImportPlan, ImportPresetPreview } from '../shared/types';
 import { startupTaskExists } from './startup-task';
+import { sealPreset, sealPresets, type SecretCodec } from './secrets';
+import { safeStorageCodec } from './secrets-electron';
+import { applyImportPlan, parsePresetFile, planImport, toPresetFile } from './preset-transfer';
+import { getStableMonitors } from './monitors';
 
-// Monitor identity (stable hardware ids + position fallback) lives in monitors.ts.
-
-type MonitorRect = { id: string; x: number; y: number; width: number; height: number };
-
-/**
- * Pick a free monitor for a zone whose saved `monitorId` isn't connected: the
- * one nearest the saved monitor's center, but only if that center still falls
- * on it. Without saved bounds there's nothing safe to go on, so no match.
- */
-function rematchMonitor(zone: Zone, free: MonitorRect[]): MonitorRect | null {
-  if (!zone.monitorBounds || free.length === 0) return null;
-  const zcx = zone.monitorBounds.x + zone.monitorBounds.width / 2;
-  const zcy = zone.monitorBounds.y + zone.monitorBounds.height / 2;
-  let best: MonitorRect | null = null;
-  let bestDist = Infinity;
-  for (const m of free) {
-    const dist = Math.hypot(m.x + m.width / 2 - zcx, m.y + m.height / 2 - zcy);
-    if (dist < bestDist) { bestDist = dist; best = m; }
-  }
-  if (!best) return null;
-  const inside = zcx >= best.x && zcx < best.x + best.width && zcy >= best.y && zcy < best.y + best.height;
-  return inside ? best : null;
-}
-
-/**
- * Map zones with a stale `monitorId` onto current monitors, in memory only.
- * Each saved monitor maps to a distinct current monitor, so zones from two
- * screens never collapse onto one; unmatched zones keep their saved id and
- * fail at launch as "not connected". Never persisted: the saved preset only
- * changes when the user saves it.
- */
-export function resolveZoneMonitors(zones: Zone[], monitors: MonitorRect[]): Zone[] {
-  const connected = new Set(monitors.map(m => m.id));
-  const claimed = new Set(zones.filter(z => connected.has(z.monitorId)).map(z => z.monitorId));
-  const remap = new Map<string, MonitorRect | null>();
-  for (const zone of zones) {
-    if (connected.has(zone.monitorId) || remap.has(zone.monitorId)) continue;
-    const match = rematchMonitor(zone, monitors.filter(m => !claimed.has(m.id)));
-    remap.set(zone.monitorId, match);
-    if (match) {
-      claimed.add(match.id);
-      console.log(`[MonCOM] Rematched monitor ${zone.monitorId} → ${match.id} (not saved)`);
-    }
-  }
-  return zones.map(z => {
-    const m = remap.get(z.monitorId);
-    return m ? { ...z, monitorId: m.id } : z;
-  });
-}
+const PRESET_FILE_FILTER = { name: 'MonCOM preset', extensions: ['json'] };
 
 function getDataDir(): string {
   const dir = path.join(app.getPath('userData'), 'moncom-data');
@@ -118,6 +74,13 @@ export function loadPresets(): Preset[] {
   }
 }
 
+let codec: SecretCodec | null = null;
+// safeStorage is only usable after app.whenReady, so the codec is built on first use.
+export function getSecretCodec(): SecretCodec {
+  if (!codec) codec = safeStorageCodec();
+  return codec;
+}
+
 const PRESET_BACKUPS = 5;
 
 /** Shift presets.json → .bak.1 → .bak.2 … so a bad write can always be rolled back by hand. */
@@ -135,9 +98,35 @@ function rotatePresetBackups(): void {
   }
 }
 
+function writePresetsFile(presets: Preset[]): void {
+  fs.writeFileSync(getPresetsPath(), JSON.stringify(presets, null, 2));
+}
+
 function savePresets(presets: Preset[]): void {
   rotatePresetBackups();
-  fs.writeFileSync(getPresetsPath(), JSON.stringify(presets, null, 2));
+  writePresetsFile(presets);
+}
+
+/** Seals plain login values in presets.json and its backups, rotating first so the live file gets a backup that is then sealed too. Returns how many were sealed. */
+export function migratePresetsAtRest(codec: SecretCodec): number {
+  const live = sealPresets(codec, loadPresets());
+  if (live.changed > 0) rotatePresetBackups();
+  let total = 0;
+  for (let i = 1; i <= PRESET_BACKUPS; i++) {
+    const backup = `${getPresetsPath()}.bak.${i}`;
+    if (!fs.existsSync(backup)) continue;
+    try {
+      const stored: unknown = JSON.parse(fs.readFileSync(backup, 'utf-8'));
+      if (!Array.isArray(stored)) throw new Error('not a preset list');
+      const { presets, changed } = sealPresets(codec, stored as Preset[]);
+      if (changed > 0) fs.writeFileSync(backup, JSON.stringify(presets, null, 2));
+      total += changed;
+    } catch {
+      console.warn('[MonCOM] Skipping unreadable preset backup:', backup);
+    }
+  }
+  if (live.changed > 0) writePresetsFile(live.presets);
+  return total + live.changed;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -169,7 +158,8 @@ function saveSettingsFile(settings: AppSettings): void {
 export function registerPresetHandlers(ipcMain: IpcMain) {
   ipcMain.handle(IPC.GET_PRESETS, () => loadPresets());
 
-  ipcMain.handle(IPC.SAVE_PRESET, (_event, preset: Preset) => {
+  ipcMain.handle(IPC.SAVE_PRESET, (_event, incoming: Preset) => {
+    const preset = sealPreset(getSecretCodec(), incoming).preset;
     const presets = loadPresets();
     const idx = presets.findIndex(p => p.id === preset.id);
     if (idx >= 0) {
@@ -185,6 +175,66 @@ export function registerPresetHandlers(ipcMain: IpcMain) {
     const presets = loadPresets().filter(p => p.id !== id);
     savePresets(presets);
     return presets;
+  });
+
+  ipcMain.handle(IPC.EXPORT_PRESET, async (event, id: string): Promise<ExportPresetResult> => {
+    const preset = loadPresets().find(p => p.id === id);
+    if (!preset) return { ok: false, error: 'Preset not found.' };
+    const options = {
+      defaultPath: `${preset.name.replace(/[^a-zA-Z0-9]/g, '-')}.moncom.json`,
+      filters: [PRESET_FILE_FILTER],
+    };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { ok: false };
+    try {
+      const file = toPresetFile(preset, app.getVersion(), new Date());
+      fs.writeFileSync(result.filePath, JSON.stringify(file, null, 2));
+      return { ok: true, path: result.filePath };
+    } catch (e) {
+      console.error('[MonCOM] Preset export failed:', e);
+      return { ok: false, error: 'The preset file could not be written.' };
+    }
+  });
+
+  ipcMain.handle(IPC.IMPORT_PRESET_PREVIEW, async (event): Promise<ImportPresetPreview> => {
+    const options = { filters: [PRESET_FILE_FILTER], properties: ['openFile' as const] };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return { ok: false };
+    let text: string;
+    try {
+      text = fs.readFileSync(result.filePaths[0], 'utf-8');
+    } catch (e) {
+      console.error('[MonCOM] Preset import read failed:', e);
+      return { ok: false, error: 'The preset file could not be read.' };
+    }
+    try {
+      const parsed = parsePresetFile(text);
+      if (!parsed.ok) return parsed;
+      const monitors = getStableMonitors(screen);
+      const plan = planImport(parsed.file.preset, monitors);
+      return { ok: true, preset: parsed.file.preset, plan, monitors };
+    } catch {
+      return { ok: false, error: 'This preset file is incomplete.' };
+    }
+  });
+
+  ipcMain.handle(IPC.IMPORT_PRESET_COMMIT, (_event, incoming: Preset, plan: ImportPlan, name: string) => {
+    try {
+      const monitors = getStableMonitors(screen);
+      const planned = applyImportPlan(incoming, plan, monitors, 'preset-' + Date.now(), new Date().toISOString());
+      planned.name = name.trim() || planned.name;
+      // A hand-edited file can carry plain login values, so they are sealed like any other save.
+      const preset = sealPreset(getSecretCodec(), planned).preset;
+      const presets = loadPresets();
+      presets.push(preset);
+      savePresets(presets);
+      return presets;
+    } catch (e) {
+      console.error('[MonCOM] Import failed:', e);
+      return loadPresets();
+    }
   });
 
   ipcMain.handle(IPC.GET_SETTINGS, () => loadSettings());

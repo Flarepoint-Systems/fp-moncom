@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, screen, shell, Tray, Menu, nativeImage, di
 import * as path from 'path';
 import { execSync, spawn, spawnSync } from 'child_process';
 import { registerWindowHandlers, applyPresetFromMain } from './window-manager';
-import { registerPresetHandlers, loadSettings, loadPresets } from './preset-store';
+import { registerPresetHandlers, loadSettings, loadPresets, migratePresetsAtRest, getSecretCodec } from './preset-store';
 import { registerProfileHandlers } from './profile-store';
 import { getStableMonitors } from './monitors';
 import { startRecording, stopRecording, playActions } from './automation-manager';
@@ -339,6 +339,13 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC.IDENTIFY_MONITOR, () => {
     identifyMonitors();
   });
+
+  try {
+    const sealed = migratePresetsAtRest(getSecretCodec());
+    if (sealed > 0) console.log(`[MonCOM] Sealed ${sealed} stored login values`);
+  } catch (e) {
+    console.error('[MonCOM] Sealing stored login values failed:', e);
+  }
 
   // Auto-launch preset on startup
   try {

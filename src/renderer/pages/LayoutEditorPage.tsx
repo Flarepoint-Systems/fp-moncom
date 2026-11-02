@@ -1,8 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Monitor, Save, Trash2, Play, Globe, AppWindow, Grid2x2, Grid3x3, Columns2, Rows2, Check, FolderOpen, Circle, Square, MousePointerClick, Keyboard, Type, X, GripVertical, MoveVertical, ArrowLeftRight, Unplug } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import type { MonitorInfo, Zone, ZoneContent, Preset, AutomationAction, RecordingStatus, WebLoginStep } from '../../shared/types';
 import { formatApplyResult } from '../applyResultMessage';
+import { SPLIT_TEMPLATES } from '../../shared/zone-geometry';
+import { isSealed } from '../../shared/secrets';
+import type { LucideIcon } from 'lucide-react';
 
 type SplitTemplate = {
   name: string;
@@ -10,39 +13,16 @@ type SplitTemplate = {
   zones: { x: number; y: number; width: number; height: number }[];
 };
 
-const splitTemplates: SplitTemplate[] = [
-  { name: 'Full', icon: Monitor, zones: [{ x: 0, y: 0, width: 1, height: 1 }] },
-  { name: '2 Columns', icon: Columns2, zones: [
-    { x: 0, y: 0, width: 0.5, height: 1 },
-    { x: 0.5, y: 0, width: 0.5, height: 1 },
-  ]},
-  { name: '2 Rows', icon: Rows2, zones: [
-    { x: 0, y: 0, width: 1, height: 0.5 },
-    { x: 0, y: 0.5, width: 1, height: 0.5 },
-  ]},
-  { name: '2x2 Grid', icon: Grid2x2, zones: [
-    { x: 0, y: 0, width: 0.5, height: 0.5 },
-    { x: 0.5, y: 0, width: 0.5, height: 0.5 },
-    { x: 0, y: 0.5, width: 0.5, height: 0.5 },
-    { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
-  ]},
-  { name: '3x3 Grid', icon: Grid3x3, zones: [
-    { x: 0, y: 0, width: 1/3, height: 1/3 },
-    { x: 1/3, y: 0, width: 1/3, height: 1/3 },
-    { x: 2/3, y: 0, width: 1/3, height: 1/3 },
-    { x: 0, y: 1/3, width: 1/3, height: 1/3 },
-    { x: 1/3, y: 1/3, width: 1/3, height: 1/3 },
-    { x: 2/3, y: 1/3, width: 1/3, height: 1/3 },
-    { x: 0, y: 2/3, width: 1/3, height: 1/3 },
-    { x: 1/3, y: 2/3, width: 1/3, height: 1/3 },
-    { x: 2/3, y: 2/3, width: 1/3, height: 1/3 },
-  ]},
-  { name: 'Main + Side', icon: Columns2, zones: [
-    { x: 0, y: 0, width: 0.7, height: 1 },
-    { x: 0.7, y: 0, width: 0.3, height: 0.5 },
-    { x: 0.7, y: 0.5, width: 0.3, height: 0.5 },
-  ]},
-];
+const templateIcons: Record<string, LucideIcon> = {
+  'Full': Monitor,
+  '2 Columns': Columns2,
+  '2 Rows': Rows2,
+  '2x2 Grid': Grid2x2,
+  '3x3 Grid': Grid3x3,
+  'Main + Side': Columns2,
+};
+
+const splitTemplates: SplitTemplate[] = SPLIT_TEMPLATES.map(t => ({ ...t, icon: templateIcons[t.name] }));
 
 let zoneIdCounter = 0;
 function makeZoneId() {
@@ -670,7 +650,7 @@ function ZoneEditor({ zone, monitors, onUpdate, onRemove }: {
 
       {/* Web auto-login — URL zones only (robust, DOM-driven login) */}
       {zone.content && zone.content.type === 'url' && (
-        <WebLoginPanel steps={webLogin} onChange={handleWebLoginChange} />
+        <WebLoginPanel zoneId={zone.id} steps={webLogin} onChange={handleWebLoginChange} />
       )}
 
       {/* Automation section — only visible when content is assigned */}
@@ -688,10 +668,26 @@ function ZoneEditor({ zone, monitors, onUpdate, onRemove }: {
 }
 
 /* ─── Web Auto-Login Panel (URL zones) ─── */
-function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (s: WebLoginStep[]) => void }) {
+function WebLoginPanel({ zoneId, steps, onChange }: { zoneId: string; steps: WebLoginStep[]; onChange: (s: WebLoginStep[]) => void }) {
   const [open, setOpen] = useState(false);
+  // Clearing a sealed field would save '' and silently break the login, so the sealed original is restored instead.
+  const sealedOriginals = useRef(new Map<string, string>());
   const update = (i: number, patch: Partial<WebLoginStep>) => onChange(steps.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
-  const remove = (i: number) => onChange(steps.filter((_, idx) => idx !== i));
+  const updateValue = (i: number, current: string | undefined, next: string) => {
+    const k = `${zoneId}:${i}`;
+    if (current && isSealed(current)) sealedOriginals.current.set(k, current);
+    const original = sealedOriginals.current.get(k);
+    update(i, { value: next === '' && original ? original : next });
+  };
+  const remove = (i: number) => {
+    const originals = sealedOriginals.current;
+    for (let idx = i; idx < steps.length; idx++) {
+      const later = originals.get(`${zoneId}:${idx + 1}`);
+      if (later) originals.set(`${zoneId}:${idx}`, later);
+      else originals.delete(`${zoneId}:${idx}`);
+    }
+    onChange(steps.filter((_, idx) => idx !== i));
+  };
   const add = () => { onChange([...steps, { action: 'fill', selector: '', value: '', delayMs: 0 }]); setOpen(true); };
 
   return (
@@ -714,7 +710,9 @@ function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (
 
       {(open || steps.length === 0) && (
         <div className="space-y-1.5">
-          {steps.map((step, i) => (
+          {steps.map((step, i) => {
+            const sealed = isSealed(step.value);
+            return (
             <div key={i} className="flex items-center gap-1.5">
               <select
                 value={step.action}
@@ -735,10 +733,11 @@ function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (
               />
               {step.action === 'fill' && (
                 <input
-                  type="text"
-                  value={step.value || ''}
-                  onChange={(e) => update(i, { value: e.target.value })}
-                  placeholder="value"
+                  type={sealed ? 'password' : 'text'}
+                  value={sealed ? '' : step.value || ''}
+                  onChange={(e) => updateValue(i, step.value, e.target.value)}
+                  placeholder={sealed ? 'Saved' : 'value'}
+                  title={sealed ? 'Stores this value encrypted on this machine. Type a new value to replace it.' : undefined}
                   className="w-20 px-2 py-1 bg-bg-dark border border-border rounded text-[10px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-commander/60"
                 />
               )}
@@ -753,7 +752,8 @@ function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (
                 <X className="w-3 h-3" />
               </button>
             </div>
-          ))}
+            );
+          })}
           <button onClick={add} className="text-[11px] text-commander hover:text-commander-core transition-colors">
             + Add step
           </button>

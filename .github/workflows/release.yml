@@ -50,6 +50,11 @@ jobs:
         # SmartScreen section. Add signing here later if a certificate lands.
         run: npx electron-builder --win --publish never
 
+      - name: Show update feed config
+        # Proves the packaged app points at the CDN feed before anything ships.
+        shell: pwsh
+        run: Get-Content release/win-unpacked/resources/app-update.yml
+
       - name: Generate checksums and release notes
         shell: pwsh
         run: |
