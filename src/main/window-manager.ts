@@ -2,7 +2,15 @@ import { IpcMain, BrowserWindow, screen } from 'electron';
 import * as path from 'path';
 import { execSync, spawn } from 'child_process';
 import { IPC } from '../shared/types';
-import type { ApplyPresetResult, CloseAllZonesReport, LaunchZoneResult, WebLoginStep, Zone } from '../shared/types';
+import type {
+  ApplyPresetResult,
+  CloseAllZonesReport,
+  LaunchZoneResult,
+  MonitorInfo,
+  Preset,
+  WebLoginStep,
+  Zone,
+} from '../shared/types';
 import { playActions } from './automation-manager';
 import { loadSettings, getZoomForUrl, setZoomForUrl, getSecretCodec } from './preset-store';
 import { unsealZone } from './secrets';
@@ -311,14 +319,14 @@ async function moveWindowByTitle(hint: string, x: number, y: number, w: number, 
 /**
  * Launch a zone's content and position it.
  */
-async function launchZoneContent(storedZone: Zone, monitors: any[]): Promise<LaunchZoneResult> {
+async function launchZoneContent(storedZone: Zone, monitors: MonitorInfo[]): Promise<LaunchZoneResult> {
   const zone = unsealZone(getSecretCodec(), storedZone);
   if (!zone.content) {
     return { success: false, zoneId: zone.id, error: 'Zone has no content assigned' };
   }
   const content = zone.content;
 
-  const monitor = monitors.find((m: any) => m.id === zone.monitorId);
+  const monitor = monitors.find((m) => m.id === zone.monitorId);
   if (!monitor) {
     console.error(`[MonCOM] Monitor not found: ${zone.monitorId}`);
     return {
@@ -457,7 +465,7 @@ function hasLaunchedWindows(): boolean {
 }
 
 export function registerWindowHandlers(ipcMain: IpcMain) {
-  ipcMain.handle(IPC.LAUNCH_ZONE, async (_event, zone: Zone, monitors: any[]) => {
+  ipcMain.handle(IPC.LAUNCH_ZONE, async (_event, zone: Zone, monitors: MonitorInfo[]) => {
     return launchZoneContent(zone, monitors);
   });
 
@@ -473,7 +481,7 @@ export function registerWindowHandlers(ipcMain: IpcMain) {
     return findWindows();
   });
 
-  ipcMain.handle(IPC.APPLY_PRESET, async (_event, preset: any) => {
+  ipcMain.handle(IPC.APPLY_PRESET, async (_event, preset: Preset) => {
     return applyPresetFromMain(preset, screen);
   });
 
@@ -520,7 +528,7 @@ export function getApplyCount(): number {
 /**
  * Apply a preset directly from the main process (used by IPC and auto-launch).
  */
-export async function applyPresetFromMain(preset: any, screenModule: Electron.Screen): Promise<ApplyPresetResult> {
+export async function applyPresetFromMain(preset: Preset, screenModule: Electron.Screen): Promise<ApplyPresetResult> {
   applyCount++;
   let closeReport: CloseAllZonesReport | undefined;
   // Close any existing launched windows first

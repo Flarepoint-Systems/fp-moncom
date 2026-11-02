@@ -261,6 +261,11 @@ fp-moncom/
 │   │   ├── index.ts                 # App init, window & tray management
 │   │   ├── preload.ts               # Secure IPC bridge (context isolation)
 │   │   ├── window-manager.ts        # Window positioning & zone launching
+│   │   ├── monitor-rematch.ts       # Rematch zones to connected monitors
+│   │   ├── web-login.ts             # DOM-driven web auto-login
+│   │   ├── secrets.ts               # Sealing of login values at rest
+│   │   ├── secrets-electron.ts      # safeStorage codec for secrets.ts
+│   │   ├── preset-transfer.ts       # Preset file format & import planning
 │   │   └── preset-store.ts          # Preset & settings persistence
 │   │
 │   ├── renderer/                    # React frontend
@@ -270,6 +275,7 @@ fp-moncom/
 │   │   ├── components/
 │   │   │   ├── TitleBar.tsx         # Custom frameless window controls
 │   │   │   ├── Sidebar.tsx          # Navigation menu
+│   │   │   ├── ImportPresetDialog.tsx # Import preview & monitor remap
 │   │   │   └── Tooltip.tsx          # Reusable tooltip
 │   │   ├── pages/
 │   │   │   ├── DashboardPage.tsx    # Overview & quick actions
@@ -280,7 +286,10 @@ fp-moncom/
 │   │       └── globals.css          # Theme tokens & animations
 │   │
 │   └── shared/
-│       └── types.ts                 # Shared TypeScript interfaces
+│       ├── types.ts                 # Shared TypeScript interfaces
+│       ├── api.ts                   # window.moncom API contract
+│       ├── secrets.ts               # Sealed-value prefix check
+│       └── zone-geometry.ts         # Zone rect math & split templates
 │
 ├── build/                           # App icons
 ├── esbuild.main.mjs                 # Main process build config
