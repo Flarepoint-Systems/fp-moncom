@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { Play, Trash2, Clock, Layers, Bookmark, Pencil } from 'lucide-react';
-import type { AppSettings, Preset } from '../../shared/types';
+import React, { useEffect, useRef, useState } from 'react';
+import { Play, Trash2, Clock, Layers, Bookmark, Pencil, Upload, Download, Copy } from 'lucide-react';
+import type { AppSettings, ImportPresetPreview, Preset } from '../../shared/types';
 import type { Page } from '../App';
 import { formatApplyResult } from '../applyResultMessage';
 import { HotkeyField } from '../components/HotkeyField';
+import { ImportPresetDialog } from '../components/ImportPresetDialog';
 
 interface PresetsPageProps {
   onNavigate: (page: Page) => void;
@@ -17,6 +18,11 @@ export function PresetsPage({ onNavigate, onEditPreset }: PresetsPageProps) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [conflicts, setConflicts] = useState<Set<string>>(new Set());
+  const [importPreview, setImportPreview] = useState<Extract<ImportPresetPreview, { ok: true }> | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  // Enter or Escape ends the rename before the input's blur fires, so blur must not save again.
+  const renameTarget = useRef<string | null>(null);
 
   useEffect(() => {
     window.moncom?.getPresets().then(setPresets);
@@ -65,6 +71,57 @@ export function PresetsPage({ onNavigate, onEditPreset }: PresetsPageProps) {
     setConfirmDelete(null);
   };
 
+  const handleImport = async () => {
+    const preview = await window.moncom?.importPresetPreview();
+    if (!preview) return;
+    if (preview.ok) setImportPreview(preview);
+    else if (preview.error) setStatusMessage(preview.error);
+  };
+
+  const handleImportCommit = async (name: string) => {
+    if (!importPreview) return;
+    const updated = await window.moncom?.importPresetCommit(importPreview.preset, importPreview.plan, name);
+    if (updated) setPresets(updated);
+    setImportPreview(null);
+  };
+
+  const handleExport = async (id: string) => {
+    const result = await window.moncom?.exportPreset(id);
+    if (!result) return;
+    if (result.ok) setStatusMessage(`Saved to ${result.path}.`);
+    else if (result.error) setStatusMessage(result.error);
+  };
+
+  const handleDuplicate = async (p: Preset) => {
+    const now = new Date().toISOString();
+    const updated = await window.moncom?.savePreset({
+      ...p,
+      id: 'preset-' + Date.now(),
+      name: p.name + ' copy',
+      layout: { ...p.layout, id: 'layout-preset-' + Date.now() },
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (updated) setPresets(updated);
+  };
+
+  const startRename = (p: Preset) => {
+    renameTarget.current = p.id;
+    setRenamingId(p.id);
+    setRenameValue(p.name);
+  };
+
+  const finishRename = async (save: boolean) => {
+    const id = renameTarget.current;
+    renameTarget.current = null;
+    setRenamingId(null);
+    const preset = presets.find((p) => p.id === id);
+    const name = renameValue.trim();
+    if (!save || !preset || !name || name === preset.name) return;
+    const updated = await window.moncom?.savePreset({ ...preset, name });
+    if (updated) setPresets(updated);
+  };
+
   return (
     <div className="animate-fade-in">
       {/* Header */}
@@ -77,12 +134,21 @@ export function PresetsPage({ onNavigate, onEditPreset }: PresetsPageProps) {
             Saved layouts — launch or switch your whole setup in one click
           </p>
         </div>
-        <button
-          onClick={() => onNavigate('editor')}
-          className="flex items-center gap-2.5 px-5 py-2.5 bg-commander text-white rounded-lg hover:bg-commander-core transition-colors text-sm font-medium"
-        >
-          <Layers className="w-4 h-4" /> New Layout
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleImport}
+            className="flex items-center gap-2.5 px-5 py-2.5 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:border-commander/40 transition-colors text-sm font-medium"
+            title="Imports a preset from a file and shows where its zones will land first."
+          >
+            <Upload className="w-4 h-4" /> Import
+          </button>
+          <button
+            onClick={() => onNavigate('editor')}
+            className="flex items-center gap-2.5 px-5 py-2.5 bg-commander text-white rounded-lg hover:bg-commander-core transition-colors text-sm font-medium"
+          >
+            <Layers className="w-4 h-4" /> New Layout
+          </button>
+        </div>
       </div>
 
       {statusMessage && (
@@ -100,9 +166,28 @@ export function PresetsPage({ onNavigate, onEditPreset }: PresetsPageProps) {
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-semibold text-text-primary truncate">
-                    {preset.name}
-                  </h3>
+                  {renamingId === preset.id ? (
+                    <input
+                      type="text"
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={() => renameTarget.current && finishRename(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') finishRename(true);
+                        else if (e.key === 'Escape') finishRename(false);
+                      }}
+                      className="w-full px-2 py-0.5 -mx-2 bg-bg-dark border border-border rounded-lg text-base font-semibold text-text-primary focus:outline-none focus:border-commander/60"
+                    />
+                  ) : (
+                    <h3
+                      onClick={() => startRename(preset)}
+                      className="text-base font-semibold text-text-primary truncate cursor-text"
+                      title="Renames this preset."
+                    >
+                      {preset.name}
+                    </h3>
+                  )}
                   <div className="flex items-center gap-4 mt-2.5">
                     <span className="flex items-center gap-1.5 text-xs text-text-secondary">
                       <Layers className="w-3.5 h-3.5 text-text-muted" />
@@ -123,6 +208,20 @@ export function PresetsPage({ onNavigate, onEditPreset }: PresetsPageProps) {
                     title="Apply preset"
                   >
                     <Play className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleExport(preset.id)}
+                    className="p-2.5 rounded-lg text-text-muted hover:text-commander hover:bg-commander/10 transition-colors"
+                    title="Saves this preset to a file you can import on another machine. Login values are not included."
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDuplicate(preset)}
+                    className="p-2.5 rounded-lg text-text-muted hover:text-commander hover:bg-commander/10 transition-colors"
+                    title="Creates a copy of this preset."
+                  >
+                    <Copy className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => onEditPreset(preset)}
@@ -187,6 +286,14 @@ export function PresetsPage({ onNavigate, onEditPreset }: PresetsPageProps) {
             Open Layout Editor
           </button>
         </div>
+      )}
+
+      {importPreview && (
+        <ImportPresetDialog
+          preview={importPreview}
+          onCancel={() => setImportPreview(null)}
+          onImport={handleImportCommit}
+        />
       )}
     </div>
   );

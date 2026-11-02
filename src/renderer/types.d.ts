@@ -4,6 +4,9 @@ import type {
   AppSettings,
   AutomationAction,
   CloseAllZonesReport,
+  ExportPresetResult,
+  ImportPlan,
+  ImportPresetPreview,
   LaunchZoneResult,
   MonitorInfo,
   Preset,
@@ -26,6 +29,9 @@ export interface MonCOMAPI {
   getPresets(): Promise<Preset[]>;
   savePreset(preset: Preset): Promise<Preset[]>;
   deletePreset(id: string): Promise<Preset[]>;
+  exportPreset(id: string): Promise<ExportPresetResult>;
+  importPresetPreview(): Promise<ImportPresetPreview>;
+  importPresetCommit(preset: Preset, plan: ImportPlan, name: string): Promise<Preset[]>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
   registerHotkeys(): Promise<{ failed: { presetId: string; accelerator: string }[] }>;

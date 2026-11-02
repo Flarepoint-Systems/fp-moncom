@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld('moncom', {
   getPresets: () => ipcRenderer.invoke(IPC.GET_PRESETS),
   savePreset: (preset: any) => ipcRenderer.invoke(IPC.SAVE_PRESET, preset),
   deletePreset: (id: string) => ipcRenderer.invoke(IPC.DELETE_PRESET, id),
+  exportPreset: (id: string) => ipcRenderer.invoke(IPC.EXPORT_PRESET, id),
+  importPresetPreview: () => ipcRenderer.invoke(IPC.IMPORT_PRESET_PREVIEW),
+  importPresetCommit: (preset: any, plan: any, name: string) =>
+    ipcRenderer.invoke(IPC.IMPORT_PRESET_COMMIT, preset, plan, name),
 
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC.GET_SETTINGS),

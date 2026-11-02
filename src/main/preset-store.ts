@@ -1,11 +1,15 @@
-import { IpcMain, app } from 'electron';
+import { IpcMain, BrowserWindow, app, dialog, screen } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { IPC } from '../shared/types';
-import type { Preset, AppSettings } from '../shared/types';
+import type { Preset, AppSettings, ExportPresetResult, ImportPlan, ImportPresetPreview } from '../shared/types';
 import { startupTaskExists } from './startup-task';
 import { sealPreset, sealPresets, type SecretCodec } from './secrets';
 import { safeStorageCodec } from './secrets-electron';
+import { applyImportPlan, parsePresetFile, planImport, toPresetFile } from './preset-transfer';
+import { getStableMonitors } from './monitors';
+
+const PRESET_FILE_FILTER = { name: 'MonCOM preset', extensions: ['json'] };
 
 function getDataDir(): string {
   const dir = path.join(app.getPath('userData'), 'moncom-data');
@@ -170,6 +174,61 @@ export function registerPresetHandlers(ipcMain: IpcMain) {
 
   ipcMain.handle(IPC.DELETE_PRESET, (_event, id: string) => {
     const presets = loadPresets().filter(p => p.id !== id);
+    savePresets(presets);
+    return presets;
+  });
+
+  ipcMain.handle(IPC.EXPORT_PRESET, async (event, id: string): Promise<ExportPresetResult> => {
+    const preset = loadPresets().find(p => p.id === id);
+    if (!preset) return { ok: false, error: 'Preset not found.' };
+    const options = {
+      defaultPath: `${preset.name.replace(/[^a-zA-Z0-9]/g, '-')}.moncom.json`,
+      filters: [PRESET_FILE_FILTER],
+    };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { ok: false };
+    try {
+      const file = toPresetFile(preset, app.getVersion(), new Date());
+      fs.writeFileSync(result.filePath, JSON.stringify(file, null, 2));
+      return { ok: true, path: result.filePath };
+    } catch (e) {
+      console.error('[MonCOM] Preset export failed:', e);
+      return { ok: false, error: 'The preset file could not be written.' };
+    }
+  });
+
+  ipcMain.handle(IPC.IMPORT_PRESET_PREVIEW, async (event): Promise<ImportPresetPreview> => {
+    const options = { filters: [PRESET_FILE_FILTER], properties: ['openFile' as const] };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return { ok: false };
+    let text: string;
+    try {
+      text = fs.readFileSync(result.filePaths[0], 'utf-8');
+    } catch (e) {
+      console.error('[MonCOM] Preset import read failed:', e);
+      return { ok: false, error: 'The preset file could not be read.' };
+    }
+    try {
+      const parsed = parsePresetFile(text);
+      if (!parsed.ok) return parsed;
+      const monitors = getStableMonitors(screen);
+      const plan = planImport(parsed.file.preset, monitors);
+      return { ok: true, preset: parsed.file.preset, plan, monitors };
+    } catch {
+      return { ok: false, error: 'This preset file is incomplete.' };
+    }
+  });
+
+  ipcMain.handle(IPC.IMPORT_PRESET_COMMIT, (_event, incoming: Preset, plan: ImportPlan, name: string) => {
+    const monitors = getStableMonitors(screen);
+    const planned = applyImportPlan(incoming, plan, monitors, 'preset-' + Date.now(), new Date().toISOString());
+    planned.name = name.trim() || planned.name;
+    // A hand-edited file can carry plain login values, so they are sealed like any other save.
+    const preset = sealPreset(getSecretCodec(), planned).preset;
+    const presets = loadPresets();
+    presets.push(preset);
     savePresets(presets);
     return presets;
   });
