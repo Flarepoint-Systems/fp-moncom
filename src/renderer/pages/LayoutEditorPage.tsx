@@ -694,7 +694,9 @@ function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (
 
       {(open || steps.length === 0) && (
         <div className="space-y-1.5">
-          {steps.map((step, i) => (
+          {steps.map((step, i) => {
+            const sealed = isSealed(step.value);
+            return (
             <div key={i} className="flex items-center gap-1.5">
               <select
                 value={step.action}
@@ -715,11 +717,11 @@ function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (
               />
               {step.action === 'fill' && (
                 <input
-                  type={isSealed(step.value) ? 'password' : 'text'}
-                  value={isSealed(step.value) ? '' : step.value || ''}
+                  type={sealed ? 'password' : 'text'}
+                  value={sealed ? '' : step.value || ''}
                   onChange={(e) => update(i, { value: e.target.value })}
-                  placeholder={isSealed(step.value) ? 'Saved' : 'value'}
-                  title={isSealed(step.value) ? 'Stores this value encrypted on this machine. Type a new value to replace it.' : undefined}
+                  placeholder={sealed ? 'Saved' : 'value'}
+                  title={sealed ? 'Stores this value encrypted on this machine. Type a new value to replace it.' : undefined}
                   className="w-20 px-2 py-1 bg-bg-dark border border-border rounded text-[10px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-commander/60"
                 />
               )}
@@ -734,7 +736,8 @@ function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (
                 <X className="w-3 h-3" />
               </button>
             </div>
-          ))}
+            );
+          })}
           <button onClick={add} className="text-[11px] text-commander hover:text-commander-core transition-colors">
             + Add step
           </button>

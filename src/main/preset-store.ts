@@ -94,16 +94,36 @@ function rotatePresetBackups(): void {
   }
 }
 
-function savePresets(presets: Preset[]): void {
-  rotatePresetBackups();
+function writePresetsFile(presets: Preset[]): void {
   fs.writeFileSync(getPresetsPath(), JSON.stringify(presets, null, 2));
 }
 
-/** Seals any plain login values left in presets.json. Returns how many were sealed. */
+function savePresets(presets: Preset[]): void {
+  rotatePresetBackups();
+  writePresetsFile(presets);
+}
+
+/** Seals any plain login values left in presets.json and its backups. Returns how many were sealed. */
 export function migratePresetsAtRest(codec: SecretCodec): number {
+  let total = 0;
+  for (let i = 1; i <= PRESET_BACKUPS; i++) {
+    const backup = `${getPresetsPath()}.bak.${i}`;
+    if (!fs.existsSync(backup)) continue;
+    let stored: Preset[];
+    try {
+      stored = JSON.parse(fs.readFileSync(backup, 'utf-8'));
+    } catch (e) {
+      console.warn(`[MonCOM] Skipping unreadable preset backup ${backup}:`, e);
+      continue;
+    }
+    const { presets, changed } = sealPresets(codec, stored);
+    if (changed > 0) fs.writeFileSync(backup, JSON.stringify(presets, null, 2));
+    total += changed;
+  }
+  // No rotation: the backups already hold this data, now sealed.
   const { presets, changed } = sealPresets(codec, loadPresets());
-  if (changed > 0) savePresets(presets);
-  return changed;
+  if (changed > 0) writePresetsFile(presets);
+  return total + changed;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
