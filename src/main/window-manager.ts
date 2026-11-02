@@ -4,7 +4,8 @@ import { execSync, spawn } from 'child_process';
 import { IPC } from '../shared/types';
 import type { ApplyPresetResult, CloseAllZonesReport, LaunchZoneResult, WebLoginStep, Zone } from '../shared/types';
 import { playActions } from './automation-manager';
-import { loadSettings, getZoomForUrl, setZoomForUrl } from './preset-store';
+import { loadSettings, getZoomForUrl, setZoomForUrl, getSecretCodec } from './preset-store';
+import { unsealZone } from './secrets';
 import { resolveZoneMonitors } from './monitor-rematch';
 import { getStableMonitors } from './monitors';
 import { findProfileForExe } from './profile-store';
@@ -310,7 +311,8 @@ async function moveWindowByTitle(hint: string, x: number, y: number, w: number, 
 /**
  * Launch a zone's content and position it.
  */
-async function launchZoneContent(zone: Zone, monitors: any[]): Promise<LaunchZoneResult> {
+async function launchZoneContent(storedZone: Zone, monitors: any[]): Promise<LaunchZoneResult> {
+  const zone = unsealZone(getSecretCodec(), storedZone);
   if (!zone.content) {
     return { success: false, zoneId: zone.id, error: 'Zone has no content assigned' };
   }

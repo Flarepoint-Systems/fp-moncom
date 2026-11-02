@@ -4,6 +4,8 @@ import * as path from 'path';
 import { IPC } from '../shared/types';
 import type { Preset, AppSettings } from '../shared/types';
 import { startupTaskExists } from './startup-task';
+import { sealPreset, sealPresets, type SecretCodec } from './secrets';
+import { safeStorageCodec } from './secrets-electron';
 
 function getDataDir(): string {
   const dir = path.join(app.getPath('userData'), 'moncom-data');
@@ -68,6 +70,13 @@ export function loadPresets(): Preset[] {
   }
 }
 
+let codec: SecretCodec | null = null;
+// safeStorage is only usable after app.whenReady, so the codec is built on first use.
+export function getSecretCodec(): SecretCodec {
+  if (!codec) codec = safeStorageCodec();
+  return codec;
+}
+
 const PRESET_BACKUPS = 5;
 
 /** Shift presets.json → .bak.1 → .bak.2 … so a bad write can always be rolled back by hand. */
@@ -88,6 +97,13 @@ function rotatePresetBackups(): void {
 function savePresets(presets: Preset[]): void {
   rotatePresetBackups();
   fs.writeFileSync(getPresetsPath(), JSON.stringify(presets, null, 2));
+}
+
+/** Seals any plain login values left in presets.json. Returns how many were sealed. */
+export function migratePresetsAtRest(codec: SecretCodec): number {
+  const { presets, changed } = sealPresets(codec, loadPresets());
+  if (changed > 0) savePresets(presets);
+  return changed;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -119,7 +135,8 @@ function saveSettingsFile(settings: AppSettings): void {
 export function registerPresetHandlers(ipcMain: IpcMain) {
   ipcMain.handle(IPC.GET_PRESETS, () => loadPresets());
 
-  ipcMain.handle(IPC.SAVE_PRESET, (_event, preset: Preset) => {
+  ipcMain.handle(IPC.SAVE_PRESET, (_event, incoming: Preset) => {
+    const preset = sealPreset(getSecretCodec(), incoming).preset;
     const presets = loadPresets();
     const idx = presets.findIndex(p => p.id === preset.id);
     if (idx >= 0) {

@@ -4,6 +4,7 @@ import { Tooltip } from '../components/Tooltip';
 import type { MonitorInfo, Zone, ZoneContent, Preset, AutomationAction, RecordingStatus, WebLoginStep } from '../../shared/types';
 import { formatApplyResult } from '../applyResultMessage';
 import { SPLIT_TEMPLATES } from '../../shared/zone-geometry';
+import { isSealed } from '../../shared/secrets';
 import type { LucideIcon } from 'lucide-react';
 
 type SplitTemplate = {
@@ -714,10 +715,11 @@ function WebLoginPanel({ steps, onChange }: { steps: WebLoginStep[]; onChange: (
               />
               {step.action === 'fill' && (
                 <input
-                  type="text"
-                  value={step.value || ''}
+                  type={isSealed(step.value) ? 'password' : 'text'}
+                  value={isSealed(step.value) ? '' : step.value || ''}
                   onChange={(e) => update(i, { value: e.target.value })}
-                  placeholder="value"
+                  placeholder={isSealed(step.value) ? 'Saved' : 'value'}
+                  title={isSealed(step.value) ? 'Stores this value encrypted on this machine. Type a new value to replace it.' : undefined}
                   className="w-20 px-2 py-1 bg-bg-dark border border-border rounded text-[10px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-commander/60"
                 />
               )}
