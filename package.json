@@ -39,9 +39,8 @@
     },
     "publish": [
       {
-        "provider": "github",
-        "owner": "Flarepoint-Systems",
-        "repo": "fp-moncom"
+        "provider": "generic",
+        "url": "https://cdn.flarepoint.nl/moncom/win"
       }
     ],
     "nsis": {
